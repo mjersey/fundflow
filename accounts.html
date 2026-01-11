@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fund Flow - Accounts</title>
+    <link id="favicon" rel="icon" type="image/png" href="images/fundflow-logo.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>tailwind.config = { darkMode: 'class', theme: { extend: { colors: { dark: { bg: '#000000', card: '#111827' } } } } }</script>
+    <style>
+        body { font-family: 'Inter', sans-serif; } 
+        ::-webkit-scrollbar { width: 6px; } 
+        ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; } 
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; } 
+        .hidden { display: none !important; } 
+        .no-scrollbar::-webkit-scrollbar { display: none; } 
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .custom-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+            background-position: right 0.5rem center;
+            background-repeat: no-repeat;
+            background-size: 1.5em 1.5em;
+        }
+    </style>
+
+    <!-- FIREBASE & AUTH GUARD -->
+    <script type="module">
+        // IMPORT CONFIG FROM SEPARATE FILE
+        import { auth, db } from "./firebase-config.js";
+        
+        import { 
+            onAuthStateChanged, 
+            signOut, 
+            updateProfile, 
+            updatePassword, 
+            reauthenticateWithCredential, 
+            EmailAuthProvider,
+            sendPasswordResetEmail,
+            deleteUser
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { doc, setDoc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Exports
+        window.auth = auth;
+        window.db = db;
+        
+        // AUTH ACTIONS
+        window.logout = () => { 
+            if(window.showConfirmModal) {
+                window.showConfirmModal(
+                    "Sign Out", 
+                    "Are you sure you want to sign out?", 
+                    // Redirect to index.html (Login Page)
+                    () => signOut(auth).then(() => window.location.href = 'index.html')
+                );
+            } else {
+                if(confirm("Sign Out?")) signOut(auth).then(() => window.location.href = 'index.html');
+            }
+        };
+
+        window.handleForgotPassword = async () => {
+            const user = auth.currentUser;
+            if (user && user.email) {
+                try {
+                    await sendPasswordResetEmail(auth, user.email);
+                    window.showCustomAlert("Email Sent", `Password reset email sent to ${user.email}. Please check your inbox.`);
+                } catch (e) {
+                    window.showCustomAlert("Error", "Error sending email: " + e.message);
+                }
+            }
+        };
+
+        window.saveProfileChanges = saveProfileChanges;
+        window.handleDeleteAccount = handleDeleteAccount;
+
+        // AUTH GUARD & DATA LOADER
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                // Redirect to index.html if no user
+                window.location.href = 'index.html';
+            } else {
+                console.log("Logged in:", user.email);
+                if(window.updateUserProfileUI) window.updateUserProfileUI(user);
+
+                try {
+                    const docRef = doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState');
+                    const docSnap = await getDoc(docRef);
+                    
+                    if (docSnap.exists()) {
+                        window.state = { ...window.state, ...docSnap.data() };
+                        if(window.updateGreeting) window.updateGreeting(true, user);
+                    } else {
+                        if(window.state) {
+                            window.state.accounts = [];
+                            window.state.expenses = [];
+                            window.state.savings = [];
+                            window.state.allocations = [];
+                            window.state.transfers = [];
+                            window.state.savingsHistory = [];
+                            window.state.income = 0;
+                        }
+                        saveData();
+                        if(window.updateGreeting) window.updateGreeting(false, user);
+                    }
+                    if(window.renderApp) window.renderApp();
+                } catch (e) {
+                    console.error("Sync Error:", e);
+                }
+            }
+        });
+
+        window.saveData = async () => {
+            localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+            const user = auth.currentUser;
+            if (user) {
+                try {
+                    await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'), window.state);
+                } catch (e) { console.error("Cloud Save Error:", e); }
+            }
+        };
+
+        // --- PROFILE EDIT LOGIC ---
+        async function saveProfileChanges() {
+            const user = auth.currentUser;
+            if (!user) return;
+
+            const btn = document.getElementById('btn-save-profile');
+            const originalText = btn.innerText;
+            btn.innerText = "Saving...";
+            btn.disabled = true;
+
+            const newName = document.getElementById('edit-username').value;
+            const newPass = document.getElementById('edit-new-password').value;
+            const currPass = document.getElementById('edit-current-password').value;
+
+            try {
+                if (newPass) {
+                    if(user.providerData.some(p => p.providerId === 'password')) {
+                        if (!currPass) throw new Error("Current password is required to set a new one.");
+                        const cred = EmailAuthProvider.credential(user.email, currPass);
+                        await reauthenticateWithCredential(user, cred);
+                    }
+                    await updatePassword(user, newPass);
+                }
+
+                if (newName && newName !== user.displayName) {
+                    await updateProfile(user, { displayName: newName });
+                    window.updateGreeting(true, { ...user, displayName: newName });
+                    window.updateUserProfileUI({ ...user, displayName: newName });
+                }
+
+                window.showCustomAlert("Success", "Profile updated successfully.");
+                
+                // Clear fields
+                document.getElementById('edit-current-password').value = ''; 
+                document.getElementById('edit-new-password').value = '';
+                document.getElementById('password-fields').classList.add('hidden');
+                document.getElementById('user-modal').classList.add('hidden');
+
+            } catch (e) {
+                console.error(e);
+                let msg = e.message;
+                if(e.code === 'auth/wrong-password') msg = "Incorrect current password.";
+                if(e.code === 'auth/weak-password') msg = "New password is too weak (min 6 chars).";
+                window.showCustomAlert("Update Failed", msg);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function handleDeleteAccount() {
+            window.showConfirmModal(
+                "DELETE ACCOUNT",
+                "WARNING: This will permanently delete your account and ALL your data. This action cannot be undone. Are you absolutely sure?",
+                async () => {
+                    const user = auth.currentUser;
+                    try {
+                        await deleteDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'));
+                        await deleteUser(user);
+                        window.showCustomAlert("Account Deleted", "Your account has been deleted. Redirecting...");
+                        // Redirect to index.html
+                        setTimeout(() => window.location.href = 'index.html', 2000);
+                    } catch (e) {
+                        if(e.code === 'auth/requires-recent-login') {
+                            window.showCustomAlert("Security Check", "Please sign out and sign in again before deleting your account for security reasons.");
+                        } else {
+                            window.showCustomAlert("Error", "Error deleting account: " + e.message);
+                        }
+                    }
+                }
+            );
+        }
+    </script>
+</head>
+<body class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex justify-center min-h-screen p-4 transition-colors duration-300">
+
+    <div class="w-full max-w-[1400px] bg-white dark:bg-black min-h-[90vh] shadow-2xl relative border border-gray-200 dark:border-gray-800 rounded-3xl flex flex-col md:flex-row overflow-hidden my-auto z-10">
+        
+        <aside class="w-full md:w-80 lg:w-96 bg-gray-50/80 dark:bg-gray-900/50 border-r border-gray-200 dark:border-gray-800 p-6 flex flex-col relative overflow-y-auto">
+            
+            <!-- HEADER: APP NAME & LOGO -->
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-3">
+                    <img src="images/fundflow-logo.png" alt="Logo" class="w-10 h-10 object-contain drop-shadow-sm hover:scale-105 transition-transform">
+                    <div>
+                        <h1 class="text-lg font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-blue-600">FUND FLOW</h1>
+                        <p class="text-[9px] text-gray-500 uppercase tracking-widest leading-none">Finance Manager</p>
+                    </div>
+                </div>
+                <!-- Mini Buttons -->
+                <div class="flex gap-1">
+                    <button onclick="toggleTheme()" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
+                        <i data-lucide="moon" class="icon-moon w-4 h-4 hidden"></i>
+                        <i data-lucide="sun" class="icon-sun w-4 h-4 hidden"></i>
+                    </button>
+                    <button onclick="toggleSettings(true)" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
+                        <i data-lucide="settings" class="w-4 h-4"></i>
+                    </button>
+                    <!-- LOGOUT BUTTON -->
+                    <button onclick="logout()" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors" title="Sign Out">
+                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+             <div class="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-2xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm mb-6 relative overflow-hidden">
+                <label class="text-gray-500 dark:text-gray-400 text-[10px] font-medium uppercase tracking-wider mb-1 block">Liquid Assets</label>
+                <div class="flex items-center pb-2 mb-3">
+                    <span id="total-assets-display" class="text-3xl font-bold text-gray-900 dark:text-white">₱0</span>
+                </div>
+                 <div class="flex justify-between items-center text-xs p-2 bg-gray-100 dark:bg-black/20 rounded-lg">
+                    <span class="text-gray-500 dark:text-gray-400">Cash + Banks + Goals</span>
+                </div>
+            </div>
+
+            <div class="flex-1">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-cyan-600 dark:text-cyan-400 text-xs font-bold flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Credit & Payables</h3>
+                </div>
+                
+                <div id="credit-stats-container" class="space-y-3"></div>
+            </div>
+        </aside>
+
+        <main class="flex-1 p-6 lg:p-8 overflow-y-auto pb-20 bg-white dark:bg-black relative">
+            <!-- UPDATED HEADER: Smaller title on mobile, Icon Buttons on mobile -->
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-base md:text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-200">
+                    <i data-lucide="wallet" class="text-cyan-500 w-5 h-5"></i> 
+                    <span>My Accounts</span>
+                </h2>
+                <div class="flex gap-2">
+                    <button onclick="openTransferModal()" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold p-2 sm:py-2 sm:px-3 rounded-lg flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all" title="Transfer">
+                        <i data-lucide="arrow-right-left" class="w-4 h-4"></i> 
+                        <span class="hidden sm:inline">Transfer</span>
+                    </button>
+                    <button onclick="openAddAccountModal()" class="bg-gray-900 dark:bg-white text-white dark:text-black text-xs font-bold p-2 sm:py-2 sm:px-3 rounded-lg flex items-center gap-2 shadow-lg transition-all" title="Add Account">
+                        <i data-lucide="plus" class="w-4 h-4"></i> 
+                        <span class="hidden sm:inline">Add Account</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="space-y-8">
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-2"><i data-lucide="banknote" class="w-4 h-4"></i> Liquid Assets (Cash & Banks)</h3>
+                    <div id="accounts-liquid-list" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                </div>
+
+                <div>
+                    <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-2"><i data-lucide="credit-card" class="w-4 h-4"></i> Credit Cards & Loans</h3>
+                    <div id="accounts-credit-list" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                </div>
+            </div>
+
+            <div class="fixed bottom-14 left-0 right-0 md:left-80 lg:left-96 flex justify-center z-50 pointer-events-none">
+                <nav class="bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200 dark:border-gray-800 shadow-2xl rounded-full px-6 py-3 flex items-center gap-2 pointer-events-auto transition-all hover:scale-105">
+                    <a href="dashboard.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="layout-dashboard" class="w-5 h-5 mb-0.5"></i>
+                        <span class="text-[9px] font-medium">Home</span>
+                    </a>
+                    <a href="index.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="pie-chart" class="w-5 h-5 mb-0.5"></i>
+                        <span class="text-[9px] font-medium">Budget</span>
+                    </a>
+                    <a href="savings.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="piggy-bank" class="w-5 h-5 mb-0.5"></i>
+                        <span class="text-[9px] font-medium">Save</span>
+                    </a>
+                    <a href="accounts.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400 transition-all">
+                        <i data-lucide="wallet" class="w-5 h-5 mb-0.5"></i>
+                        <span class="text-[9px] font-bold">Wallet</span>
+                    </a>
+                </nav>
+            </div>
+        </main>
+    </div>
+    
+    <!-- ACCOUNT MODALS (unchanged except for consistent styling if needed) -->
+    <!-- ... (Account details, Add Account, etc. remain the same structure, just wrapped in the same style if modified) ... -->
+    <div id="account-details-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-2xl p-6 shadow-2xl animate-fade-in flex flex-col max-h-[90vh]">
+            <div class="flex justify-between items-center mb-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+                <div>
+                    <h3 id="details-account-name" class="font-bold text-lg text-gray-900 dark:text-white">Account Details</h3>
+                    <p id="details-account-type" class="text-xs text-gray-500">Savings Account</p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="btn-edit-from-details" class="p-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors">
+                        <i data-lucide="edit-2" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="closeAccountDetailsModal()" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="overflow-y-auto flex-1 pr-1 space-y-6">
+                <div class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-700">
+                    <span class="block text-xs text-gray-500 uppercase tracking-wider mb-1" id="details-balance-label">Current Balance</span>
+                    <span id="details-account-balance" class="block text-3xl font-bold text-gray-900 dark:text-white tracking-tight">₱0.00</span>
+                </div>
+
+                <div id="details-credit-breakdown" class="hidden grid grid-cols-3 gap-2 text-center bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 border border-gray-200 dark:border-gray-800">
+                    <div>
+                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Installment</span>
+                        <span id="details-installment" class="text-sm font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
+                    </div>
+                    <div class="border-x border-gray-200 dark:border-gray-700">
+                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Current Bill</span>
+                        <span id="details-current-bill" class="text-sm font-bold text-cyan-600 dark:text-cyan-400 truncate block">₱0</span>
+                    </div>
+                    <div>
+                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Upcoming</span>
+                        <span id="details-upcoming" class="text-sm font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="text-xs font-bold text-gray-500 mb-3 flex items-center gap-2 uppercase tracking-wider"><i data-lucide="history" class="w-4 h-4"></i> Recent Transactions</h4>
+                    <div id="account-history-list" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <div id="details-credit-actions" class="hidden mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                <button onclick="closeAccountDetailsModal(); openInstallmentModal(currentViewingAccountId)" class="w-full bg-gray-900 dark:bg-white text-white dark:text-black font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Add Installment / Loan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- USER PROFILE / EDIT MODAL -->
+    <div id="user-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-fade-in relative">
+            <button onclick="document.getElementById('user-modal').classList.add('hidden')" class="absolute top-4 right-4 text-gray-500 hover:text-gray-900 dark:hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+            
+            <div class="flex flex-col items-center mb-4">
+                <div class="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-2 shadow-lg" id="profile-initial">U</div>
+                <h3 class="text-xl font-bold text-gray-900 dark:text-white" id="profile-name">User</h3>
+                <p class="text-xs text-gray-500 dark:text-gray-400" id="profile-email">email@example.com</p>
+            </div>
+
+            <div class="space-y-4">
+                <!-- Username Edit -->
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1 ml-1">Username / Display Name</label>
+                    <input type="text" id="edit-username" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none focus:border-cyan-500 transition-all">
+                </div>
+
+                <!-- Password Toggle -->
+                <div>
+                    <button type="button" onclick="document.getElementById('password-fields').classList.toggle('hidden')" class="text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1">
+                        <i data-lucide="lock" class="w-3 h-3"></i> Change Password?
+                    </button>
+                    
+                    <div id="password-fields" class="hidden mt-3 space-y-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-800">
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 mb-1 ml-1">CURRENT PASSWORD (Required)</label>
+                            <input type="password" id="edit-current-password" placeholder="Verify it's you" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 text-sm dark:text-white outline-none focus:border-red-500 transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-gray-400 mb-1 ml-1">NEW PASSWORD</label>
+                            <input type="password" id="edit-new-password" placeholder="Minimum 6 characters" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 text-sm dark:text-white outline-none focus:border-cyan-500 transition-all">
+                        </div>
+                        
+                        <!-- FORGOT PASSWORD LINK -->
+                        <div class="pt-1 text-center">
+                            <button type="button" onclick="handleForgotPassword()" class="text-[10px] text-gray-500 hover:text-cyan-500 hover:underline">
+                                Forgot password? Send reset email
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <button id="btn-save-profile" onclick="saveProfileChanges()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/20">
+                    Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ADD ACCOUNT MODAL -->
+    <div id="add-account-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-2xl p-6 shadow-2xl animate-fade-in">
+            <div class="flex justify-between items-center mb-4">
+                <h3 id="modal-account-title" class="font-bold text-lg text-gray-900 dark:text-white">Add New Account</h3>
+                <button onclick="closeAddAccountModal()" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Account Name</label>
+                        <input type="text" id="new-account-name" placeholder="e.g. My BPI" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1" id="balance-label">Current Balance</label>
+                        <input type="number" id="new-account-balance" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs text-gray-500 mb-2">Account Type (Tag)</label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <label class="cursor-pointer">
+                            <input type="radio" name="account-tag" value="daily" class="peer sr-only">
+                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-green-100 peer-checked:border-green-500 peer-checked:text-green-700 dark:peer-checked:bg-green-900/30 dark:peer-checked:text-green-300 text-xs font-medium transition-all">
+                                Daily (Budget)
+                            </div>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="radio" name="account-tag" value="savings" class="peer sr-only">
+                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-cyan-100 peer-checked:border-cyan-500 peer-checked:text-cyan-700 dark:peer-checked:bg-cyan-900/30 dark:peer-checked:text-cyan-300 text-xs font-medium transition-all">
+                                Savings
+                            </div>
+                        </label>
+                        <label class="cursor-pointer">
+                            <input type="radio" name="account-tag" value="credit" class="peer sr-only">
+                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-red-100 peer-checked:border-red-500 peer-checked:text-red-700 dark:peer-checked:bg-red-900/30 dark:peer-checked:text-red-300 text-xs font-medium transition-all">
+                                Credit/Bill
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div id="credit-fields" class="hidden space-y-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Credit Limit</label>
+                        <input type="number" id="new-account-limit" placeholder="e.g. 30000" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Statement Date (Day)</label>
+                            <input type="number" id="new-account-statement" placeholder="e.g. 5" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Due Date (Day)</label>
+                            <input type="number" id="new-account-due" placeholder="e.g. 25" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Provider</label>
+                    <input type="text" id="account-provider-search" oninput="renderAccountProviderGrid()" placeholder="Search..." class="w-full mb-2 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
+                    <div class="h-32 overflow-y-auto border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/50 p-2">
+                        <div id="account-provider-grid" class="grid grid-cols-3 gap-2"></div>
+                    </div>
+                </div>
+                
+                <div class="flex gap-2 pt-2 justify-end">
+                    <button id="btn-save-account" onclick="submitNewAccount()" class="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl">Save Changes</button>
+                    <button id="btn-delete-account" onclick="deleteCurrentAccount()" class="hidden p-3 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SETTINGS MODAL (New Expanded Version) -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-3xl p-6 shadow-2xl animate-fade-in flex flex-col h-auto max-h-[85vh]">
+            <div class="flex justify-between items-center mb-6 pb-2 border-b border-gray-100 dark:border-gray-800">
+                <div class="flex items-center gap-2">
+                    <div class="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg"><i data-lucide="settings" class="w-5 h-5 text-gray-500 dark:text-white"></i></div>
+                    <h3 class="font-bold text-lg dark:text-white">App Settings</h3>
+                </div>
+                <button onclick="toggleSettings(false)" class="text-gray-400 hover:text-gray-900 dark:hover:text-white"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            
+            <div class="overflow-y-auto pr-2 space-y-6">
+                
+                <!-- Financial Report Section -->
+                <div class="bg-gradient-to-r from-cyan-50 to-blue-50 dark:from-cyan-900/10 dark:to-blue-900/10 p-5 rounded-2xl border border-cyan-100 dark:border-cyan-900/30">
+                    <h4 class="text-xs font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <i data-lucide="file-text" class="w-4 h-4"></i> Statement of Account
+                    </h4>
+                    
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div class="col-span-2">
+                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Select Period Type</label>
+                            <select id="report-type-selector" onchange="toggleReportInputs()" class="custom-select w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none cursor-pointer">
+                                <option value="standard">Standard (Week/Month/All)</option>
+                                <option value="specific-month">Specific Month</option>
+                                <option value="custom">Custom Date Range</option>
+                            </select>
+                        </div>
+
+                        <!-- Standard Inputs -->
+                        <div id="report-input-standard" class="col-span-2">
+                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Range</label>
+                            <select id="report-range" class="custom-select w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
+                                <option value="week">Current Week</option>
+                                <option value="month">Current Month</option>
+                                <option value="all">All Time History</option>
+                            </select>
+                        </div>
+
+                        <!-- Specific Month Input -->
+                        <div id="report-input-month" class="hidden col-span-2">
+                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Select Month</label>
+                            <input type="month" id="report-month-val" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
+                        </div>
+
+                        <!-- Custom Range Inputs -->
+                        <div id="report-input-custom" class="hidden col-span-2 grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">From</label>
+                                <input type="date" id="report-start" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">To</label>
+                                <input type="date" id="report-end" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="generateReport()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 transition-all">
+                        <i data-lucide="printer" class="w-4 h-4"></i> Generate & Print Report
+                    </button>
+                </div>
+
+                <!-- General Preferences -->
+                <div>
+                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Preferences</h4>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="col-span-2">
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Dashboard Payable View</label>
+                            <select id="setting-dashboard-view" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 dark:text-white focus:border-cyan-500 outline-none transition-colors">
+                                <option value="weekly">This Week</option>
+                                <option value="monthly">This Month</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Recurring Income</label>
+                            <div class="relative">
+                                <span class="absolute left-3 top-3 text-gray-400 text-xs">₱</span>
+                                <input type="number" id="setting-amount" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl py-3 pl-6 pr-3 text-sm dark:text-white focus:border-cyan-500 outline-none transition-colors">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Frequency</label>
+                            <select id="setting-frequency" onchange="updateSettingsUI()" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white focus:border-cyan-500 outline-none transition-colors">
+                                <option value="weekly">Weekly</option>
+                                <option value="semi-monthly">Semi-Monthly</option>
+                                <option value="monthly">Monthly</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="setting-weekly-container" class="mt-3">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Day of Week</label>
+                        <select id="setting-day" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none">
+                            <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+                        </select>
+                    </div>
+                    <div id="setting-monthly-container" class="hidden mt-3">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Day of Month</label>
+                        <input type="number" id="setting-date" min="1" max="31" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none">
+                    </div>
+                </div>
+
+                <!-- Data Management -->
+                <div class="pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
+                    <h4 class="text-xs font-bold text-red-500 uppercase tracking-wider mb-3">Danger Zone</h4>
+                    
+                    <!-- RESET DATA (With Confirmation) -->
+                    <button onclick="window.showConfirmModal('Reset Data', 'Are you sure you want to delete ALL transactions and goals? This cannot be undone.', confirmResetData)" class="w-full bg-red-50 hover:bg-red-100 dark:bg-red-900/10 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 font-bold py-3.5 rounded-xl border border-red-100 dark:border-red-900/30 transition-colors text-xs flex items-center justify-center gap-2 group">
+                        <i data-lucide="trash-2" class="w-4 h-4 group-hover:scale-110 transition-transform"></i> Reset All Data
+                    </button>
+
+                    <!-- DELETE ACCOUNT (With Confirmation) -->
+                    <button onclick="handleDeleteAccount()" class="w-full bg-transparent hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 dark:text-red-500 font-bold py-3 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900/30 transition-colors text-xs flex items-center justify-center gap-2">
+                        <i data-lucide="user-x" class="w-4 h-4"></i> Delete Account
+                    </button>
+                </div>
+            </div>
+
+            <div class="pt-4 mt-2 border-t border-gray-200 dark:border-gray-700">
+                <button onclick="saveSettings()" class="w-full bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 font-bold py-3.5 rounded-xl transition-all shadow-lg">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- OTHER MODALS (Transfer, Installment) -->
+    <div id="transfer-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-md rounded-2xl p-6 shadow-2xl animate-fade-in flex flex-col h-auto">
+            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-lg dark:text-white">Transfer / Pay</h3><button onclick="closeTransferModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+            
+            <div class="space-y-4 relative">
+                
+                <div class="relative z-[50]">
+                    <label class="block text-xs text-gray-500 mb-1 ml-1">From Account</label>
+                    <div class="relative" id="transfer-from-container">
+                        <button onclick="toggleDropdown('transfer-from')" id="transfer-from-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[54px] shadow-sm group">
+                            <span class="text-gray-400 text-sm">Select Source</span>
+                            <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
+                        </button>
+                        <div id="transfer-from-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+8px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl max-h-64 overflow-y-auto hidden animate-fade-in w-full z-[60] p-2"></div>
+                        <input type="hidden" id="transfer-from-value">
+                    </div>
+                </div>
+
+                <div class="flex justify-center relative z-0 -my-3 pointer-events-none">
+                    <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded-full text-gray-400 dark:text-gray-500 shadow-sm border border-white dark:border-gray-700 relative z-10">
+                        <i data-lucide="arrow-down" class="w-4 h-4"></i>
+                    </div>
+                </div>
+
+                <div class="relative z-[40]">
+                    <label class="block text-xs text-gray-500 mb-1 ml-1">To Account</label>
+                    <div class="relative" id="transfer-to-container">
+                        <button onclick="toggleDropdown('transfer-to')" id="transfer-to-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[54px] shadow-sm group">
+                            <span class="text-gray-400 text-sm">Select Destination</span>
+                            <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
+                        </button>
+                        <div id="transfer-to-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+8px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl max-h-64 overflow-y-auto hidden animate-fade-in w-full z-[60] p-2"></div>
+                        <input type="hidden" id="transfer-to-value">
+                    </div>
+                </div>
+
+                <div class="relative z-10">
+                    <label class="block text-xs text-gray-500 mb-1 ml-1">Amount to Transfer</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-3.5 text-gray-400 font-bold">₱</span>
+                        <input type="number" id="transfer-amount" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl py-3 pl-8 pr-4 dark:text-white font-bold outline-none text-lg focus:border-cyan-500 transition-all">
+                    </div>
+                    
+                    <div id="transfer-smart-pay" class="hidden mt-2 flex gap-2 overflow-x-auto no-scrollbar">
+                         <button id="btn-pay-full" class="whitespace-nowrap px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs font-bold rounded-lg border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors flex items-center gap-1">
+                            Pay Full Balance <span id="val-pay-full" class="font-normal opacity-80">(₱0)</span>
+                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-6 relative z-0">
+                <button onclick="submitTransfer()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98]">Confirm Transfer</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="installment-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-fade-in">
+            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-lg dark:text-white">Add Installment</h3><button onclick="closeInstallmentModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+            
+            <p class="text-xs text-gray-500 mb-4">Record a new loan or installment plan for this account.</p>
+
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Principal Amount</label>
+                        <input type="number" id="install-amount" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white font-bold outline-none focus:border-cyan-500" placeholder="0.00">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 mb-1">Total Interest</label>
+                        <input type="number" id="install-interest" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white font-bold outline-none focus:border-cyan-500" placeholder="0.00">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-500 mb-1">Terms</label>
+                    <select id="install-terms" onchange="calculateInstallment()" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        <option value="1">1 Month (Next Billing)</option>
+                        <option value="3">3 Months</option>
+                        <option value="6">6 Months</option>
+                        <option value="9">9 Months</option>
+                        <option value="12">12 Months</option>
+                        <option value="18">18 Months</option>
+                        <option value="24">24 Months</option>
+                    </select>
+                </div>
+                <div><label class="block text-xs text-gray-500 mb-1">Start Date</label><input type="date" id="install-date" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none cursor-pointer focus:border-cyan-500"></div>
+                <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs">
+                    Monthly Payment: <span id="install-monthly-display" class="font-bold">₱0.00</span>
+                </div>
+                <button onclick="submitInstallmentPlan()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl">Create Plan</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- LINK SHARED SCRIPT -->
+    <script src="script.js"></script>
+    <script>
+        // Exposed Functions
+        window.renderApp = renderApp;
+        window.openAddAccountModal = openAddAccountModal;
+        window.closeAddAccountModal = closeAddAccountModal;
+        window.openEditAccountModal = openEditAccountModal;
+        window.submitNewAccount = submitNewAccount;
+        window.deleteCurrentAccount = deleteCurrentAccount;
+        window.renderAccountProviderGrid = renderAccountProviderGrid;
+        window.openTransferModal = openTransferModal;
+        window.closeTransferModal = closeTransferModal;
+        window.submitTransfer = submitTransfer;
+        window.openAccountDetails = openAccountDetails;
+        window.closeAccountDetailsModal = closeAccountDetailsModal;
+
+        // Custom Dropdown Functions
+        window.toggleDropdown = toggleDropdown;
+        window.selectOption = selectOption;
+
+        // Installment/Bill Functions
+        window.openInstallmentModal = openInstallmentModal;
+        window.closeInstallmentModal = closeInstallmentModal;
+        window.submitInstallmentPlan = submitInstallmentPlan;
+        window.calculateInstallment = calculateInstallment;
+        window.deleteTransaction = deleteTransaction; 
+
+        let selectedAccountProviderId = null; 
+        let editingId = null;
+        let installmentAccountId = null;
+        let currentViewingAccountId = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                loadState(); 
+                initTheme();
+                
+                // Init Transfers if missing
+                if(!state.transfers) state.transfers = [];
+
+                // Toggle Credit Fields based on Tag
+                const radios = document.getElementsByName('account-tag');
+                radios.forEach(radio => {
+                    radio.addEventListener('change', (e) => {
+                        const creditFields = document.getElementById('credit-fields');
+                        const balanceLabel = document.getElementById('balance-label');
+                        if (e.target.value === 'credit') {
+                            creditFields.classList.remove('hidden');
+                            balanceLabel.innerText = 'Outstanding Balance (Debt)';
+                            balanceLabel.classList.add('text-red-500');
+                        } else {
+                            creditFields.classList.add('hidden');
+                            balanceLabel.innerText = 'Current Balance';
+                            balanceLabel.classList.remove('text-red-500');
+                        }
+                    });
+                });
+
+                // Close dropdowns on click outside
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest('.relative')) {
+                        document.querySelectorAll('.custom-dropdown-menu').forEach(d => d.classList.add('hidden'));
+                    }
+                });
+
+                renderApp();
+            } catch (e) { console.error("Init error:", e); }
+        });
+
+        /* --- RENDERERS --- */
+        function renderApp() {
+            renderAccounts(); 
+            updateTotals();
+            renderCreditStats();
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        // --- NEW: CREDIT & PAYABLES STATS (SIDEBAR) ---
+        function renderCreditStats() {
+            const container = document.getElementById('credit-stats-container');
+            if(!container) return;
+            container.innerHTML = '';
+
+            // 1. Calculate Credit Utilization
+            const creditAccounts = state.accounts.filter(a => a.tag === 'credit');
+            const totalDebt = creditAccounts.reduce((acc, curr) => acc + curr.balance, 0);
+            const totalLimit = creditAccounts.reduce((acc, curr) => acc + (curr.creditLimit || 0), 0);
+            
+            let utilization = 0;
+            if (totalLimit > 0) {
+                utilization = (totalDebt / totalLimit) * 100;
+            }
+
+            // 2. Calculate Weekly & Monthly Due
+            const now = new Date();
+            const oneWeek = new Date(); oneWeek.setDate(now.getDate() + 7);
+            const oneMonth = new Date(); oneMonth.setMonth(now.getMonth() + 1);
+
+            let weeklyDue = 0;
+            let monthlyDue = 0;
+            let overdue = 0;
+
+            state.expenses.forEach(exp => {
+                const d = new Date(exp.id);
+                // Only count expenses linked to credit accounts OR generally categorized as bills
+                const isCreditRelated = exp.accountId && state.accounts.find(a => a.id == exp.accountId)?.tag === 'credit';
+                
+                // Just count all future expenses as payables for simplicity in "Payables"
+                if (d > now) {
+                    if (d <= oneWeek) weeklyDue += exp.amount;
+                    if (d <= oneMonth) monthlyDue += exp.amount;
+                } else {
+                    overdue += exp.amount;
+                }
+            });
+
+            // 3. Insight Logic
+            let insightTitle = "Good Payer";
+            let insightMsg = "Keep it up!";
+            let insightColor = "text-green-500";
+            let insightBg = "bg-green-100 dark:bg-green-900/20";
+            let icon = "thumbs-up";
+
+            if (overdue > 0) {
+                insightTitle = "Overdue Items";
+                insightMsg = "You have past due bills.";
+                insightColor = "text-red-500";
+                insightBg = "bg-red-100 dark:bg-red-900/20";
+                icon = "alert-circle";
+            } else if (utilization > 80) {
+                insightTitle = "High Usage";
+                insightMsg = "Credit usage is high.";
+                insightColor = "text-orange-500";
+                insightBg = "bg-orange-100 dark:bg-orange-900/20";
+                icon = "alert-triangle";
+            } else if (utilization === 0 && totalDebt === 0) {
+                 insightTitle = "Debt Free";
+                 insightMsg = "No outstanding balances.";
+                 icon = "check-circle";
+            }
+
+            // RENDER HTML
+            
+            // Card 1: Insight
+            container.insertAdjacentHTML('beforeend', `
+                <div class="p-3 rounded-xl border border-gray-200 dark:border-gray-800 ${insightBg} flex items-center gap-3">
+                    <div class="w-8 h-8 rounded-lg bg-white/50 dark:bg-black/20 flex items-center justify-center ${insightColor}">
+                        <i data-lucide="${icon}" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-sm font-bold text-gray-900 dark:text-white">${insightTitle}</h4>
+                        <p class="text-[10px] text-gray-500 dark:text-gray-400">${insightMsg}</p>
+                    </div>
+                </div>
+            `);
+
+            // Card 2: Payables (Grid)
+            container.insertAdjacentHTML('beforeend', `
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
+                        <span class="text-[10px] text-gray-500 uppercase">Due This Week</span>
+                        <span class="block text-sm font-bold text-gray-900 dark:text-white mt-1">₱${weeklyDue.toLocaleString()}</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
+                        <span class="text-[10px] text-gray-500 uppercase">Due This Month</span>
+                        <span class="block text-sm font-bold text-cyan-600 dark:text-cyan-400 mt-1">₱${monthlyDue.toLocaleString()}</span>
+                    </div>
+                </div>
+            `);
+
+            // Card 3: Credit Stats
+            if (totalLimit > 0) {
+                 container.insertAdjacentHTML('beforeend', `
+                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+                        <div class="flex justify-between items-center mb-2">
+                             <span class="text-xs font-bold text-gray-500 uppercase">Credit Utilization</span>
+                             <span class="text-xs font-bold text-gray-900 dark:text-white">${utilization.toFixed(1)}%</span>
+                        </div>
+                        <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                            <div class="bg-gradient-to-r from-cyan-500 to-blue-600 h-2 rounded-full" style="width: ${utilization}%"></div>
+                        </div>
+                        <div class="flex justify-between mt-2 text-[9px] text-gray-400">
+                            <span>Debt: ₱${totalDebt.toLocaleString()}</span>
+                            <span>Limit: ₱${totalLimit.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `);
+            }
+        }
+
+        function renderAccountHistory(accountId) {
+            const container = document.getElementById('account-history-list');
+            if(!container) return;
+            container.innerHTML = '';
+
+            // 1. Get Expenses
+            const expenses = state.expenses.filter(e => e.accountId == accountId).map(e => ({
+                ...e,
+                type: 'expense',
+                label: e.note || 'Expense'
+            }));
+
+            // 2. Get Transfers
+            const transfers = (state.transfers || []).filter(t => t.from == accountId || t.to == accountId).map(t => {
+                const isOut = t.from == accountId;
+                const otherId = isOut ? t.to : t.from;
+                const otherAcc = state.accounts.find(a => a.id == otherId);
+                return {
+                    id: t.id,
+                    amount: t.amount,
+                    date: t.date || new Date(t.id).toISOString(),
+                    type: isOut ? 'transfer_out' : 'transfer_in',
+                    label: isOut ? `Transfer to ${otherAcc?.name || 'Unknown'}` : `Transfer from ${otherAcc?.name || 'Unknown'}`
+                };
+            });
+
+            // Merge & Sort
+            const allTx = [...expenses, ...transfers].sort((a,b) => {
+                const dA = new Date(a.date || a.id).getTime();
+                const dB = new Date(b.date || b.id).getTime();
+                return dB - dA;
+            });
+
+            if(allTx.length === 0) {
+                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">No transactions found</div>';
+                return;
+            }
+
+            allTx.forEach(tx => {
+                const dateObj = new Date(tx.date || tx.id);
+                const dateStr = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                
+                let icon = 'receipt';
+                let colorClass = 'text-gray-900 dark:text-white';
+                let amountPrefix = '-';
+                let bgClass = 'bg-gray-100 dark:bg-gray-700';
+                let deleteType = 'expense';
+
+                if(tx.type === 'transfer_in') {
+                    icon = 'arrow-down-left';
+                    colorClass = 'text-green-600 dark:text-green-400';
+                    amountPrefix = '+';
+                    bgClass = 'bg-green-100 dark:bg-green-900/20 text-green-600';
+                    deleteType = 'transfer';
+                } else if(tx.type === 'transfer_out') {
+                    icon = 'arrow-up-right';
+                    colorClass = 'text-blue-600 dark:text-blue-400';
+                    bgClass = 'bg-blue-100 dark:bg-blue-900/20 text-blue-600';
+                    deleteType = 'transfer';
+                } else {
+                    // Expense
+                    colorClass = 'text-red-600 dark:text-red-400';
+                    bgClass = 'bg-red-100 dark:bg-red-900/20 text-red-600';
+                }
+
+                container.insertAdjacentHTML('beforeend', `
+                    <div class="flex justify-between items-center p-2 rounded-lg border border-gray-100 dark:border-gray-700/50 hover:bg-white dark:hover:bg-gray-700 transition-colors group">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-6 h-6 rounded-md ${bgClass} flex items-center justify-center shrink-0"><i data-lucide="${icon}" class="w-3 h-3"></i></div>
+                            <div class="overflow-hidden">
+                                <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate block">${tx.label}</span>
+                                <span class="text-[9px] text-gray-400 block">${dateStr}</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-bold font-mono ${colorClass}">${amountPrefix}₱${Number(tx.amount).toLocaleString()}</span>
+                            <button onclick="deleteTransaction('${tx.id}', '${accountId}', '${deleteType}')" class="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded transition-all"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                        </div>
+                    </div>
+                `);
+            });
+            
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        /* --- DELETE TRANSACTION LOGIC --- */
+        function deleteTransaction(txId, currentAccountId, type) {
+            showConfirmModal(
+                "Delete Transaction?",
+                "This will permanently delete the transaction and reverse its effect on your balance.",
+                () => {
+                    if (type === 'expense') {
+                        const expense = state.expenses.find(e => e.id == txId);
+                        if (expense) {
+                            const acc = state.accounts.find(a => a.id == expense.accountId);
+                            if (acc) {
+                                // Reverse balance change
+                                if (acc.tag === 'credit' || acc.type === 'credit') {
+                                    // Expense increased debt, so deleting it reduces debt (balance)
+                                    acc.balance -= expense.amount;
+                                    
+                                    // Reverse Interest if it was part of this expense
+                                    if (expense.interestPortion) {
+                                        acc.interestBalance = Math.max(0, (acc.interestBalance || 0) - expense.interestPortion);
+                                    }
+                                } else {
+                                    // Expense reduced funds, so deleting it refunds it
+                                    acc.balance += expense.amount;
+                                }
+                            }
+                            state.expenses = state.expenses.filter(e => e.id != txId);
+                        }
+                    } else if (type === 'transfer') {
+                        const transfer = state.transfers.find(t => t.id == txId);
+                        if (transfer) {
+                            const fromAcc = state.accounts.find(a => a.id == transfer.from);
+                            const toAcc = state.accounts.find(a => a.id == transfer.to);
+                            
+                            // Revert From Account
+                            if (fromAcc) {
+                                if (fromAcc.tag === 'credit') fromAcc.balance -= transfer.amount; 
+                                else fromAcc.balance += transfer.amount; 
+                            }
+                            
+                            // Revert To Account
+                            if (toAcc) {
+                                if (toAcc.tag === 'credit') {
+                                    toAcc.balance += transfer.amount;
+                                } else {
+                                    toAcc.balance -= transfer.amount;
+                                }
+                            }
+                            state.transfers = state.transfers.filter(t => t.id != txId);
+                        }
+                    }
+                    
+                    saveData();
+                    renderApp();
+                    if(currentAccountId) openAccountDetails(currentAccountId); // Refresh modal if open
+                }
+            );
+        }
+
+        function updateTotals() {
+            const elAssets = document.getElementById('total-assets-display');
+            if(elAssets) {
+                let liquid = 0;
+                const savingsBySource = {};
+                state.savings.forEach(goal => {
+                    if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
+                });
+                state.accounts.forEach(acc => {
+                    if (acc.tag !== 'credit') { // Filter liquid assets
+                        liquid += acc.balance + (savingsBySource[acc.providerId] || 0);
+                    }
+                });
+                elAssets.innerText = `₱${liquid.toLocaleString()}`;
+            }
+        }
+
+        function renderAccounts() {
+            const liquidList = document.getElementById('accounts-liquid-list');
+            const creditList = document.getElementById('accounts-credit-list');
+            
+            const savingsBySource = {};
+            state.savings.forEach(goal => {
+                if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
+            });
+
+            const createCard = (acc, isCredit = false) => {
+                let provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
+                const savingsHere = savingsBySource[acc.id] || 0; 
+                
+                // Credit Card Specific Logic
+                if (isCredit) {
+                    const limit = acc.creditLimit || 0;
+                    const debt = acc.balance; // Balance is treated as Debt
+                    
+                    // Exclude Interest from Limit Calculation
+                    const interestBal = acc.interestBalance || 0;
+                    const principalDebt = Math.max(0, debt - interestBal);
+                    const available = limit > 0 ? Math.max(0, limit - principalDebt) : 0;
+                    
+                    // Logic for Installment / Current Bill / Upcoming
+                    // Installment: Sum of all FUTURE expenses for this account
+                    const todayTime = Date.now();
+                    const futureExpenses = state.expenses.filter(e => e.accountId === acc.id && e.id > todayTime);
+                    const installmentTotal = futureExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+                    // Automatic Current Bill Calculation
+                    // Sum of expenses due this month (or due soon)
+                    const now = new Date();
+                    const currentMonthExpenses = state.expenses.filter(e => {
+                        if (e.accountId !== acc.id) return false;
+                        const d = new Date(e.id);
+                        // Simple Check: Same Month and Year
+                        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                    });
+                    const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+                    
+                    const upcomingBill = Math.max(0, debt - currentBill);
+
+                    // Use a Credit Card Look (Gradient)
+                    const cardBg = "bg-gradient-to-br from-slate-900 to-black border-slate-800";
+
+                    return `
+                    <div onclick="openAccountDetails('${acc.id}')" class="relative group overflow-hidden rounded-2xl ${cardBg} p-5 border border-gray-700 shadow-xl cursor-pointer transition-all hover:scale-[1.01] hover:shadow-2xl hover:border-gray-500">
+                        <div class="flex justify-between items-start mb-6">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg">
+                                    <i data-lucide="${provider.icon}" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-white text-sm leading-tight">${acc.name}</h3>
+                                    <span class="text-[10px] text-gray-400 uppercase tracking-wider">${provider.name}</span>
+                                </div>
+                            </div>
+                            <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold py-1.5 px-3 rounded-full backdrop-blur-sm border border-white/10 transition-colors flex items-center gap-1">
+                                Pay <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                            </button>
+                        </div>
+
+                        <div class="mb-6">
+                            <span class="block text-[10px] text-gray-400 uppercase tracking-widest mb-1">Total Outstanding</span>
+                            <span class="block text-3xl font-mono font-bold text-white tracking-tight">₱${debt.toLocaleString()}</span>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-2 text-center w-full">
+                            <div class="overflow-hidden">
+                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Installment</span>
+                                <span class="text-xs font-bold text-gray-300 truncate block" title="₱${installmentTotal.toLocaleString()}">₱${installmentTotal.toLocaleString()}</span>
+                            </div>
+                            <div class="border-x border-white/10 px-1 overflow-hidden">
+                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Current Bill</span>
+                                <span class="text-xs font-bold text-white truncate block" title="₱${currentBill.toLocaleString()}">₱${currentBill.toLocaleString()}</span>
+                            </div>
+                            <div class="overflow-hidden">
+                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Upcoming</span>
+                                <span class="text-xs font-bold text-gray-300 truncate block" title="₱${upcomingBill.toLocaleString()}">₱${upcomingBill.toLocaleString()}</span>
+                            </div>
+                        </div>
+
+                         <div class="mt-4 pt-4 border-t border-white/10">
+                             <div class="flex justify-between text-[9px] mb-1 text-gray-400">
+                                 <span>Limit: ₱${limit.toLocaleString()}</span>
+                                 <span>Avail: ₱${available.toLocaleString()}</span>
+                             </div>
+                             <div class="h-1 w-full bg-gray-800 rounded-full overflow-hidden">
+                                 <div class="h-full bg-cyan-600" style="width: ${limit > 0 ? (principalDebt/limit)*100 : 0}%"></div>
+                             </div>
+                         </div>
+                        
+                        <div class="absolute -bottom-10 -right-10 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
+                    </div>`;
+                } 
+                
+                // Liquid Asset Logic (Enhanced Card)
+                else {
+                    const total = acc.balance + savingsHere;
+                    
+                    // Logic: Interest Rate Badge
+                    const hasInterest = provider.interest && provider.interest !== '0%';
+                    const interestBadge = hasInterest 
+                        ? `<span class="text-[9px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border border-green-200 dark:border-green-800"><i data-lucide="trending-up" class="w-3 h-3"></i> ${provider.interest}</span>` 
+                        : '';
+
+                    // FIXED: Z-Index issues to ensure clickable area works for GoTyme or any Bank card
+                    return `
+                        <div onclick="openAccountDetails('${acc.id}')" class="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-5 rounded-2xl relative overflow-hidden cursor-pointer hover:border-cyan-500 transition-all shadow-sm hover:shadow-md">
+                            
+                            <div class="flex justify-between items-start mb-4 relative z-10">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-xl ${provider.color} flex items-center justify-center text-white shadow-md">
+                                        <i data-lucide="${provider.icon}" class="w-5 h-5"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-bold text-gray-900 dark:text-white text-sm">${acc.name}</h3>
+                                        <p class="text-[10px] text-gray-500">${provider.name}</p>
+                                    </div>
+                                </div>
+                                ${interestBadge}
+                            </div>
+
+                            <div class="mb-4 relative z-10">
+                                <span class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Total Assets</span>
+                                <span class="block text-2xl font-bold text-gray-900 dark:text-white tracking-tight">₱${total.toLocaleString()}</span>
+                            </div>
+
+                            <div class="space-y-2 bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 border border-gray-100 dark:border-gray-800 relative z-10">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="text-gray-500">Available</span>
+                                    <span class="font-bold text-gray-700 dark:text-gray-300">₱${acc.balance.toLocaleString()}</span>
+                                </div>
+                                ${savingsHere > 0 ? `
+                                <div class="flex justify-between items-center text-xs pt-1 border-t border-gray-200 dark:border-gray-700">
+                                    <span class="text-orange-500 flex items-center gap-1"><i data-lucide="lock" class="w-3 h-3"></i> Locked in Goals</span>
+                                    <span class="font-bold text-orange-600 dark:text-orange-400">₱${savingsHere.toLocaleString()}</span>
+                                </div>` : ''}
+                            </div>
+
+                            <div class="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="p-2 bg-gray-100 dark:bg-gray-700 hover:bg-cyan-100 dark:hover:bg-cyan-900/30 text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg transition-colors shadow-sm" title="Transfer">
+                                    <i data-lucide="arrow-right-left" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            
+                            <div class="absolute -top-10 -right-10 w-32 h-32 bg-gray-50 dark:bg-gray-800/50 rounded-full blur-3xl pointer-events-none z-0"></div>
+                        </div>`;
+                }
+            };
+
+            if (liquidList && creditList) {
+                // Filter by Tag
+                const banks = state.accounts.filter(a => a.tag !== 'credit');
+                const credits = state.accounts.filter(a => a.tag === 'credit');
+
+                liquidList.innerHTML = banks.length ? banks.map(a => createCard(a, false)).join('') : '<div class="col-span-full text-center text-xs text-gray-400 py-4">No bank or cash accounts</div>';
+                creditList.innerHTML = credits.length ? credits.map(a => createCard(a, true)).join('') : '<div class="col-span-full text-center text-xs text-gray-400 py-4">No credit accounts</div>';
+            }
+        }
+
+        /* --- BILL / INSTALLMENT LOGIC --- */
+        function openInstallmentModal(accId) {
+            const acc = state.accounts.find(a => a.id === accId);
+            if(!acc) return;
+            installmentAccountId = accId;
+            
+            document.getElementById('install-amount').value = '';
+            document.getElementById('install-interest').value = ''; // Added interest field
+            document.getElementById('install-date').value = new Date().toISOString().split('T')[0];
+            
+            // Default 1 month
+            const termSelect = document.getElementById('install-terms');
+            if(termSelect) termSelect.value = "1";
+
+            document.getElementById('installment-modal').classList.remove('hidden');
+            calculateInstallment(); // Update display immediately
+        }
+
+        function closeInstallmentModal() {
+            document.getElementById('installment-modal').classList.add('hidden');
+        }
+
+        function calculateInstallment() {
+            const amount = Number(document.getElementById('install-amount').value);
+            const interest = Number(document.getElementById('install-interest').value) || 0;
+            const terms = Number(document.getElementById('install-terms').value);
+            
+            let monthly = 0;
+            if (terms > 0) {
+                monthly = (amount + interest) / terms;
+            }
+            document.getElementById('install-monthly-display').innerText = `₱${monthly.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+        }
+
+        function submitInstallmentPlan() {
+            const amount = Number(document.getElementById('install-amount').value);
+            const interest = Number(document.getElementById('install-interest').value) || 0;
+            const terms = Number(document.getElementById('install-terms').value);
+            const dateVal = document.getElementById('install-date').value;
+            
+            if(!amount || !dateVal) return showCustomAlert("Error", "Please fill required fields");
+            
+            const startDate = new Date(dateVal);
+            const monthlyAmount = (amount + interest) / terms;
+            const monthlyInterest = interest / terms; // Distribute interest evenly
+            const accIndex = state.accounts.findIndex(a => a.id === installmentAccountId);
+            const acc = state.accounts[accIndex];
+            
+            // Increase total debt (Principal + Interest)
+            acc.balance += (amount + interest);
+            // Track Interest Balance separately to exclude from Limit
+            acc.interestBalance = (acc.interestBalance || 0) + interest;
+
+            for(let i = 0; i < terms; i++) {
+                const dueDate = new Date(startDate);
+                dueDate.setMonth(startDate.getMonth() + i);
+                
+                const noteLabel = terms === 1 ? `Bill/Loan - ${acc.name}` : `Installment (${i+1}/${terms}) - ${acc.name}`;
+
+                state.expenses.push({
+                    id: dueDate.getTime(), 
+                    amount: monthlyAmount,
+                    interestPortion: monthlyInterest, // Tag expense with interest portion for deletion
+                    note: noteLabel,
+                    accountId: installmentAccountId,
+                    category: 'bills',
+                    repeat: false
+                });
+            }
+            
+            closeInstallmentModal();
+            saveData();
+            renderApp();
+            showCustomAlert("Success", `Plan created! Debt increased by ₱${(amount + interest).toLocaleString()}.`);
+        }
+
+        /* --- ACCOUNT DETAILS MODAL (View + History) --- */
+        function openAccountDetails(id) {
+            const acc = state.accounts.find(a => a.id === id);
+            if (!acc) return;
+            currentViewingAccountId = id;
+
+            document.getElementById('details-account-name').innerText = acc.name;
+            document.getElementById('details-account-type').innerText = acc.tag.toUpperCase();
+            document.getElementById('details-account-balance').innerText = `₱${acc.balance.toLocaleString()}`;
+            
+            // Link Edit button
+            const editBtn = document.getElementById('btn-edit-from-details');
+            editBtn.onclick = () => {
+                closeAccountDetailsModal();
+                openEditAccountModal(id);
+            };
+
+            const creditBreakdown = document.getElementById('details-credit-breakdown');
+            const creditActions = document.getElementById('details-credit-actions');
+            const balanceLabel = document.getElementById('details-balance-label');
+
+            if (acc.tag === 'credit') {
+                creditBreakdown.classList.remove('hidden');
+                creditActions.classList.remove('hidden');
+                balanceLabel.innerText = "Total Outstanding Balance";
+                balanceLabel.classList.add('text-red-500');
+
+                // CALCULATE STATS
+                const todayTime = Date.now();
+                const futureExpenses = state.expenses.filter(e => e.accountId === acc.id && e.id > todayTime);
+                const installmentTotal = futureExpenses.reduce((sum, e) => sum + e.amount, 0);
+                
+                // Automatic Current Bill: Expenses due in current Month
+                const now = new Date();
+                const currentMonthExpenses = state.expenses.filter(e => {
+                        if (e.accountId !== acc.id) return false;
+                        const d = new Date(e.id);
+                        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                });
+                const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+                
+                const upcomingBill = Math.max(0, acc.balance - currentBill);
+
+                document.getElementById('details-installment').innerText = `₱${installmentTotal.toLocaleString()}`;
+                document.getElementById('details-current-bill').innerText = `₱${currentBill.toLocaleString()}`;
+                document.getElementById('details-upcoming').innerText = `₱${upcomingBill.toLocaleString()}`;
+
+            } else {
+                creditBreakdown.classList.add('hidden');
+                creditActions.classList.add('hidden');
+                balanceLabel.innerText = "Current Balance";
+                balanceLabel.classList.remove('text-red-500');
+            }
+
+            renderAccountHistory(id);
+            document.getElementById('account-details-modal').classList.remove('hidden');
+        }
+
+        function closeAccountDetailsModal() {
+            document.getElementById('account-details-modal').classList.add('hidden');
+        }
+
+        /* --- ADD/EDIT ACCOUNT MODAL (Form) --- */
+        function openAddAccountModal() {
+            editingId = null;
+            const el = document.getElementById('add-account-modal');
+            if(!el) return;
+            document.getElementById('modal-account-title').innerText = "New Account";
+            document.getElementById('new-account-name').value = '';
+            document.getElementById('new-account-balance').value = '';
+            document.getElementById('new-account-limit').value = '';
+            document.getElementById('new-account-statement').value = '';
+            document.getElementById('new-account-due').value = '';
+            document.getElementById('account-provider-search').value = '';
+            
+            // Default Tag
+            const radios = document.getElementsByName('account-tag');
+            if(radios[0]) radios[0].checked = true;
+            
+            const creditFields = document.getElementById('credit-fields');
+            creditFields.classList.add('hidden');
+            
+            document.getElementById('balance-label').innerText = 'Current Balance';
+            document.getElementById('balance-label').classList.remove('text-red-500');
+
+            document.getElementById('btn-delete-account').classList.add('hidden');
+            
+            selectedAccountProviderId = null;
+            renderAccountProviderGrid();
+            el.classList.remove('hidden');
+        }
+
+        function closeAddAccountModal() { const el = document.getElementById('add-account-modal'); if(el) el.classList.add('hidden'); }
+
+        function openEditAccountModal(id) {
+            const acc = state.accounts.find(a => a.id === id);
+            const el = document.getElementById('add-account-modal');
+            if (!acc || !el) return;
+            editingId = id;
+            document.getElementById('modal-account-title').innerText = "Edit Account";
+            document.getElementById('new-account-name').value = acc.name;
+            document.getElementById('new-account-balance').value = acc.balance;
+            
+            // Set Tag
+            const radios = document.getElementsByName('account-tag');
+            radios.forEach(r => {
+                if(r.value === acc.tag) r.checked = true;
+            });
+
+            const creditFields = document.getElementById('credit-fields');
+            const balanceLabel = document.getElementById('balance-label');
+            
+            if (acc.tag === 'credit') {
+                creditFields.classList.remove('hidden');
+                document.getElementById('new-account-limit').value = acc.creditLimit || '';
+                document.getElementById('new-account-statement').value = acc.statementDate || '';
+                document.getElementById('new-account-due').value = acc.dueDate || '';
+                balanceLabel.innerText = 'Outstanding Balance (Debt)';
+                balanceLabel.classList.add('text-red-500');
+            } else {
+                creditFields.classList.add('hidden');
+                balanceLabel.innerText = 'Current Balance';
+                balanceLabel.classList.remove('text-red-500');
+            }
+
+            document.getElementById('btn-delete-account').classList.remove('hidden');
+            selectedAccountProviderId = acc.providerId;
+            renderAccountProviderGrid();
+            el.classList.remove('hidden');
+        }
+
+        function renderAccountProviderGrid() {
+            const container = document.getElementById('account-provider-grid');
+            if (!container) return;
+            container.innerHTML = '';
+            const search = document.getElementById('account-provider-search').value.toLowerCase();
+            
+            PROVIDERS.filter(p => p.name.toLowerCase().includes(search)).forEach(p => {
+                const isSel = selectedAccountProviderId === p.id;
+                container.insertAdjacentHTML('beforeend', `<div onclick="selectedAccountProviderId='${p.id}'; renderAccountProviderGrid();" class="cursor-pointer flex flex-col items-center p-2 rounded-xl border transition-all ${isSel ? 'ring-2 ring-cyan-500 bg-gray-50 dark:bg-gray-800' : 'border-gray-200 dark:border-gray-700'}"><div class="w-8 h-8 rounded-lg ${p.color} flex items-center justify-center text-white mb-1"><i data-lucide="${p.icon}" class="w-4 h-4"></i></div><span class="text-[10px] text-gray-700 dark:text-gray-300 text-center">${p.name}</span></div>`);
+            });
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function submitNewAccount() {
+            const name = document.getElementById('new-account-name').value;
+            const balance = Number(document.getElementById('new-account-balance').value);
+            const limit = Number(document.getElementById('new-account-limit').value);
+            const due = document.getElementById('new-account-due').value;
+            const statement = document.getElementById('new-account-statement').value;
+            
+            let tag = 'savings';
+            const radios = document.getElementsByName('account-tag');
+            radios.forEach(r => { if(r.checked) tag = r.value; });
+
+            if(!name || !selectedAccountProviderId) return showCustomAlert("Error", "Details required");
+            
+            // Map tag to type for broader logic
+            const provider = PROVIDERS.find(p => p.id === selectedAccountProviderId);
+            
+            const data = { 
+                id: editingId || Date.now().toString(), 
+                name, 
+                balance, 
+                providerId: selectedAccountProviderId, 
+                type: provider.type, 
+                tag: tag, 
+                creditLimit: tag === 'credit' ? limit : null,
+                statementDate: tag === 'credit' ? statement : null,
+                dueDate: tag === 'credit' ? due : null
+            };
+
+            if (editingId) {
+                const idx = state.accounts.findIndex(x => x.id === editingId);
+                // Preserve additional fields
+                if (idx !== -1) {
+                        data.interestBalance = state.accounts[idx].interestBalance || 0;
+                        state.accounts[idx] = data;
+                }
+            } else state.accounts.push(data);
+            
+            closeAddAccountModal();
+            saveData();
+            renderApp();
+        }
+
+        function deleteCurrentAccount() {
+            if (editingId) {
+                showConfirmModal(
+                    "Delete Account?",
+                    "Are you sure you want to delete this account? This cannot be undone.",
+                    () => {
+                        state.accounts = state.accounts.filter(x => x.id !== editingId);
+                        closeAddAccountModal();
+                        saveData();
+                        renderApp();
+                    }
+                );
+            }
+        }
+
+        /* --- TRANSFER CUSTOM DROPDOWN LOGIC --- */
+        function toggleDropdown(id) {
+            const dropdown = document.getElementById(`${id}-dropdown`);
+            if(!dropdown) return;
+            const isHidden = dropdown.classList.contains('hidden');
+            
+            // Close others
+            document.querySelectorAll('.custom-dropdown-menu').forEach(d => d.classList.add('hidden'));
+            
+            if(isHidden) {
+                renderDropdownOptions(id);
+                dropdown.classList.remove('hidden');
+            } else {
+                dropdown.classList.add('hidden');
+            }
+        }
+
+        function renderDropdownOptions(targetId) {
+            const container = document.getElementById(`${targetId}-dropdown`);
+            if(!container) return;
+            container.innerHTML = '';
+
+            state.accounts.forEach(acc => {
+                const provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
+                
+                // UPDATED: Added my-1 (margin-y) to separate items visually
+                container.insertAdjacentHTML('beforeend', `
+                    <div onclick="selectOption('${targetId}', '${acc.id}')" class="custom-option group flex items-center justify-between my-1 flex items-center justify-between p-3 mb-2 last:mb-0 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-transparent hover:border-cyan-500 hover:bg-white dark:hover:bg-gray-800 cursor-pointer transition-all shadow-sm">
+                        <div class="flex items-center gap-3 overflow-hidden">
+                            <div class="w-6 h-6 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
+                                <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
+                            </div>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200 truncate group-hover:text-cyan-600 dark:group-hover:text-cyan-400">${acc.name}</span>
+                        </div>
+                        <span class="text-xs font-mono text-gray-500 whitespace-nowrap">₱${acc.balance.toLocaleString()}</span>
+                    </div>
+                `);
+            });
+            
+            if(state.accounts.length === 0) {
+                    container.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No accounts found.</div>';
+            }
+            
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function selectOption(targetId, accId) {
+            const acc = state.accounts.find(a => a.id === accId);
+            if(!acc) return;
+            const provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
+
+            // Update Hidden Value
+            document.getElementById(`${targetId}-value`).value = accId;
+
+            // UPDATED: Simple One-Line Button Layout to match options
+            const btn = document.getElementById(`${targetId}-btn`);
+            btn.innerHTML = `
+                <div class="flex items-center gap-3 w-full overflow-hidden">
+                    <div class="w-6 h-6 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
+                        <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
+                    </div>
+                    <span class="block text-sm font-bold text-gray-900 dark:text-white truncate flex-1 text-left">${acc.name}</span>
+                    <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 shrink-0 ml-auto"></i>
+                </div>
+            `;
+            
+            // Close Dropdown
+            document.getElementById(`${targetId}-dropdown`).classList.add('hidden');
+            
+            // Check Smart Pay Logic if target is "To"
+            if (targetId === 'transfer-to') {
+                checkSmartPayLogic(accId);
+            }
+
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        // Logic to show "Pay Full Balance" if transferring to a Credit Account
+        function checkSmartPayLogic(toAccountId) {
+            const acc = state.accounts.find(a => a.id === toAccountId);
+            const smartPayContainer = document.getElementById('transfer-smart-pay');
+            const amountInput = document.getElementById('transfer-amount');
+            
+            if (acc && acc.tag === 'credit') {
+                // Determine Current Bill (Due this month)
+                const now = new Date();
+                const currentMonthExpenses = state.expenses.filter(e => {
+                        if (e.accountId !== acc.id) return false;
+                        const d = new Date(e.id);
+                        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                });
+                const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+                
+                // Show Container
+                smartPayContainer.classList.remove('hidden');
+                
+                // Pre-fill Amount with Current Bill (or Balance if 0 bill)
+                const suggestAmount = currentBill > 0 ? currentBill : acc.balance;
+                amountInput.value = suggestAmount;
+
+                // Setup Pay Full Button
+                const btnPayFull = document.getElementById('btn-pay-full');
+                document.getElementById('val-pay-full').innerText = `(₱${acc.balance.toLocaleString()})`;
+                
+                btnPayFull.onclick = () => {
+                    amountInput.value = acc.balance;
+                };
+
+            } else {
+                smartPayContainer.classList.add('hidden');
+                amountInput.value = '';
+            }
+        }
+
+        // Modified openTransferModal to support custom logic
+        function openTransferModal(targetId = null) {
+            if (state.accounts.length < 2) return showCustomAlert("Error", "Need 2 accounts to transfer");
+            
+            const el = document.getElementById('transfer-modal');
+            if(!el) return;
+            
+            // Reset fields
+            document.getElementById('transfer-from-value').value = '';
+            document.getElementById('transfer-to-value').value = '';
+            document.getElementById('transfer-amount').value = '';
+            document.getElementById('transfer-smart-pay').classList.add('hidden');
+            
+            const defaultContent = `
+                <div class="flex items-center justify-between w-full">
+                    <span class="text-gray-400 text-sm">Select Account</span>
+                    <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400"></i>
+                </div>`;
+                
+            document.getElementById('transfer-from-btn').innerHTML = defaultContent;
+            document.getElementById('transfer-to-btn').innerHTML = defaultContent;
+
+            // Pre-select if targetId provided
+            if (targetId) {
+                selectOption('transfer-to', targetId);
+                // Try to find a logical source
+                const likelySource = state.accounts.find(a => a.tag !== 'credit' && a.id !== targetId);
+                if (likelySource) selectOption('transfer-from', likelySource.id);
+            }
+
+            el.classList.remove('hidden');
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        function closeTransferModal() { const el = document.getElementById('transfer-modal'); if(el) el.classList.add('hidden'); }
+
+        function submitTransfer() {
+            const fromId = document.getElementById('transfer-from-value').value;
+            const toId = document.getElementById('transfer-to-value').value;
+            const amount = Number(document.getElementById('transfer-amount').value);
+            
+            if (!fromId || !toId) return showCustomAlert("Error", "Select both accounts");
+            if (fromId === toId) return showCustomAlert("Error", "Same account selected");
+            if (!amount || amount <= 0) return showCustomAlert("Error", "Invalid amount");
+
+            const from = state.accounts.find(a => a.id == fromId);
+            const to = state.accounts.find(a => a.id == toId);
+            
+            if (from.tag !== 'credit' && from.balance < amount) return showCustomAlert("Error", "Insufficient funds");
+            
+            const transferRecord = {
+                id: Date.now(),
+                from: fromId,
+                to: toId,
+                amount: amount,
+                date: new Date().toISOString()
+            };
+            
+            if(!state.transfers) state.transfers = [];
+            state.transfers.push(transferRecord);
+
+            if (from.tag === 'credit') {
+                from.balance += amount; 
+            } else {
+                from.balance -= amount; 
+            }
+            
+            if (to.tag === 'credit') {
+                to.balance -= amount; 
+            } else {
+                to.balance += amount; 
+            }
+            
+            closeTransferModal();
+            saveData();
+            renderApp();
+            showCustomAlert("Success", "Transfer complete");
+        }
+    </script>
+</body>
+</html>

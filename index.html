@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fund Flow - Login</title>
+    <link id="favicon" rel="icon" type="image/png" href="images/fundflow-logo.png">
+    
+    <!-- LIBRARIES -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>tailwind.config = { darkMode: 'class', theme: { extend: { colors: { dark: { bg: '#000000', card: '#111827' } } } } }</script>
+
+    <!-- THEME INIT SCRIPT -->
+    <script>
+        if (localStorage.getItem('color-theme') === 'dark' || (!('color-theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    </script>
+
+    <!-- FIREBASE SDK -->
+    <script type="module">
+        // IMPORT CONFIG FROM SEPARATE FILE
+        import { auth, db } from "./firebase-config.js";
+        
+        import { 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            onAuthStateChanged, 
+            updateProfile, 
+            GoogleAuthProvider, 
+            signInWithPopup,
+            sendPasswordResetEmail 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Setup Google Provider (Specific to Auth)
+        const googleProvider = new GoogleAuthProvider();
+        googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+        // EXPOSE GLOBALS
+        window.handleAuth = handleAuth;
+        window.handleGoogleLogin = handleGoogleLogin;
+        window.toggleAuthForm = toggleAuthForm;
+        window.resetPassword = resetPassword;
+        window.showCustomAlert = showCustomAlert;
+
+        // CUSTOM ALERT FUNCTION
+        function showCustomAlert(title, message) {
+            let modal = document.getElementById('global-alert-modal');
+            if (modal) modal.remove();
+
+            modal = document.createElement('div');
+            modal.id = 'global-alert-modal';
+            modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-fade-in';
+            
+            modal.innerHTML = `
+                <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl transform scale-100 transition-all flex flex-col items-center text-center">
+                    <div class="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mb-5 shadow-lg shadow-cyan-500/20 text-white">
+                        <i data-lucide="info" class="w-8 h-8"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">${title}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-8 leading-relaxed">${message}</p>
+                    <button onclick="document.getElementById('global-alert-modal').remove()" class="w-full bg-gray-900 dark:bg-white text-white dark:text-black font-bold py-3.5 rounded-xl hover:opacity-90 transition-opacity shadow-lg">
+                        Okay, Got it
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+        }
+
+        // AUTH LISTENER
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                console.log("User found, redirecting to Dashboard...");
+                localStorage.setItem('fundflow_user', JSON.stringify(user));
+                window.location.href = 'dashboard.html'; 
+            } else {
+                document.getElementById('loading-screen').classList.add('hidden');
+                document.getElementById('auth-screen').classList.remove('hidden');
+            }
+        });
+
+        // --- AUTH FUNCTIONS ---
+        async function handleAuth(mode) {
+            const errorMsg = document.getElementById('auth-error');
+            errorMsg.classList.add('hidden');
+            const btn = document.getElementById(mode === 'login' ? 'btn-login-submit' : 'btn-signup-submit');
+            const originalText = btn.innerText;
+            btn.innerText = "Processing...";
+            btn.disabled = true;
+
+            try {
+                if (mode === 'signup') {
+                    const username = document.getElementById('signup-username').value;
+                    const email = document.getElementById('signup-email').value;
+                    const pass = document.getElementById('signup-pass').value;
+                    if(!username || !email || !pass) throw new Error("Please fill in all fields.");
+
+                    const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+                    await updateProfile(userCredential.user, { displayName: username });
+                    
+                    const localData = localStorage.getItem('moneyFlowStateV3');
+                    if (localData) {
+                        await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', userCredential.user.uid, 'data', 'mainState'), JSON.parse(localData));
+                    }
+                } else {
+                    const email = document.getElementById('login-email').value;
+                    const pass = document.getElementById('login-pass').value;
+                    if(!email || !pass) throw new Error("Please enter email and password.");
+                    await signInWithEmailAndPassword(auth, email, pass);
+                }
+            } catch (error) {
+                console.error(error);
+                let msg = error.message;
+                if(error.code === 'auth/invalid-credential') msg = "Invalid email or password.";
+                if(error.code === 'auth/email-already-in-use') msg = "Email already registered.";
+                if(error.code === 'auth/weak-password') msg = "Password too weak.";
+                
+                showCustomAlert("Authentication Error", msg);
+                errorMsg.innerText = msg;
+                errorMsg.classList.remove('hidden');
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function handleGoogleLogin() {
+            if (window.location.protocol === 'file:') {
+                showCustomAlert("Error", "Google Sign-In requires http://localhost (Live Server). It won't work on file://.");
+                return;
+            }
+            try {
+                await signInWithPopup(auth, googleProvider);
+            } catch (error) {
+                console.error(error);
+                showCustomAlert("Login Failed", error.message);
+            }
+        }
+
+        async function resetPassword() {
+            const email = document.getElementById('login-email').value;
+            if (!email) {
+                showCustomAlert("Missing Email", "Please enter your email address in the login field first to reset your password.");
+                return;
+            }
+
+            const btn = document.getElementById('btn-forgot');
+            const originalText = btn.innerText;
+            btn.innerText = "Sending...";
+            btn.disabled = true;
+
+            try {
+                await sendPasswordResetEmail(auth, email);
+                showCustomAlert("Email Sent", `Password reset link sent to ${email}. Please check your inbox or spam folder.`);
+            } catch (error) {
+                console.error(error);
+                let msg = error.message;
+                if(error.code === 'auth/user-not-found') msg = "No account found with this email.";
+                showCustomAlert("Error", msg);
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function toggleAuthForm(mode) {
+            const loginForm = document.getElementById('form-login');
+            const signupForm = document.getElementById('form-signup');
+            const loginTab = document.getElementById('tab-login');
+            const signupTab = document.getElementById('tab-signup');
+            
+            if (mode === 'login') {
+                loginForm.classList.remove('hidden');
+                signupForm.classList.add('hidden');
+                loginTab.className = "flex-1 py-2 text-sm font-bold rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-all";
+                signupTab.className = "flex-1 py-2 text-sm font-medium rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all";
+            } else {
+                loginForm.classList.add('hidden');
+                signupForm.classList.remove('hidden');
+                signupTab.className = "flex-1 py-2 text-sm font-bold rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-all";
+                loginTab.className = "flex-1 py-2 text-sm font-medium rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all";
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; } 
+        .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #06b6d4; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex justify-center min-h-screen p-4 transition-colors duration-300">
+
+    <!-- LOADING -->
+    <div id="loading-screen" class="fixed inset-0 z-[60] bg-white dark:bg-black flex flex-col items-center justify-center">
+        <div class="loader mb-4"></div>
+        <p class="text-sm text-gray-500 animate-pulse">Checking credentials...</p>
+    </div>
+
+    <!-- AUTH SCREEN -->
+    <div id="auth-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-gray-50 dark:bg-black p-4 bg-[url('https://source.unsplash.com/random/1920x1080/?abstract,technology')] bg-cover bg-center hidden">
+        <div class="absolute inset-0 bg-white/90 dark:bg-black/90 backdrop-blur-sm"></div>
+        
+        <!-- MAIN CONTAINER: Changed max-w-md to max-w-sm for smaller size -->
+        <div class="w-full max-w-sm bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-3xl p-8 shadow-2xl animate-fade-in relative z-10 flex flex-col min-h-[580px]">
+            
+            <!-- THEME TOGGLE BUTTON -->
+            <div class="absolute top-5 right-5 z-20">
+                <button onclick="toggleTheme()" class="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800">
+                    <i data-lucide="moon" class="icon-moon w-5 h-5 hidden"></i>
+                    <i data-lucide="sun" class="icon-sun w-5 h-5 hidden"></i>
+                </button>
+            </div>
+
+            <div class="flex flex-col items-center mb-6 mt-2">
+                <img src="images/fundflow-logo.png" alt="Fund Flow" class="w-16 h-16 mb-3 object-contain drop-shadow-lg">
+                <h1 class="text-2xl font-bold text-gray-900 dark:text-white tracking-tight">Fund Flow</h1>
+                <p class="text-xs text-gray-500 text-center mt-1">Manage your finances effortlessly.</p>
+            </div>
+
+            <div id="auth-error" class="hidden mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800 rounded-xl text-xs text-red-600 dark:text-red-400 text-center"></div>
+
+            <div class="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl mb-6">
+                <button onclick="toggleAuthForm('login')" id="tab-login" class="flex-1 py-2 text-sm font-bold rounded-lg shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white transition-all">Sign In</button>
+                <button onclick="toggleAuthForm('signup')" id="tab-signup" class="flex-1 py-2 text-sm font-medium rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all">Sign Up</button>
+            </div>
+
+            <!-- LOGIN -->
+            <div id="form-login" class="flex flex-col gap-4 flex-1">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Email</label>
+                        <input type="email" id="login-email" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl p-3 outline-none focus:border-cyan-500 transition-all dark:text-white text-sm" placeholder="Enter your email address">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Password</label>
+                        <input type="password" id="login-pass" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl p-3 outline-none focus:border-cyan-500 transition-all dark:text-white text-sm" placeholder="Enter your password">
+                    </div>
+                    
+                    <!-- FORGOT PASSWORD LINK -->
+                    <div class="text-right">
+                        <button id="btn-forgot" onclick="resetPassword()" type="button" class="text-[10px] text-cyan-600 dark:text-cyan-400 font-bold hover:underline">Forgot Password?</button>
+                    </div>
+
+                    <button id="btn-login-submit" onclick="handleAuth('login')" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98] text-sm">Sign In</button>
+                </div>
+            </div>
+
+            <!-- SIGNUP -->
+            <div id="form-signup" class="flex flex-col gap-4 flex-1 hidden">
+                <div class="space-y-4">
+                    <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Username</label><input type="text" id="signup-username" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl p-3 outline-none focus:border-cyan-500 dark:text-white text-sm" placeholder="Enter your username"></div>
+                    <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Email</label><input type="email" id="signup-email" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl p-3 outline-none focus:border-cyan-500 dark:text-white text-sm" placeholder="name@example.com"></div>
+                    <div><label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Password</label><input type="password" id="signup-pass" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-800 rounded-xl p-3 outline-none focus:border-cyan-500 dark:text-white text-sm" placeholder="8+ Characters"></div>
+                    <button id="btn-signup-submit" onclick="handleAuth('signup')" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98] text-sm">Create Account</button>
+                </div>
+            </div>
+
+            <div class="relative py-5">
+                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-200 dark:border-gray-800"></div></div>
+                <div class="relative flex justify-center text-[10px] uppercase"><span class="bg-white dark:bg-gray-900 px-2 text-gray-500">Or continue with</span></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="handleGoogleLogin()" class="flex items-center justify-center gap-2 p-2.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    <span class="text-xs font-bold text-gray-700 dark:text-gray-300">Google</span>
+                </button>
+                <button onclick="showCustomAlert('Phone Login', 'Phone authentication is not yet configured for this demo.')" class="flex items-center justify-center gap-2 p-2.5 border border-gray-200 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                    <i data-lucide="smartphone" class="w-4 h-4 text-gray-900 dark:text-white"></i>
+                    <span class="text-xs font-bold text-gray-700 dark:text-gray-300">Phone</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- THEME LOGIC SCRIPT -->
+    <script>
+        window.toggleTheme = function() {
+            if (document.documentElement.classList.contains('dark')) {
+                document.documentElement.classList.remove('dark');
+                localStorage.setItem('color-theme', 'light');
+            } else {
+                document.documentElement.classList.add('dark');
+                localStorage.setItem('color-theme', 'dark');
+            }
+            updateThemeIcons();
+        }
+
+        window.updateThemeIcons = function() {
+            const isDark = document.documentElement.classList.contains('dark');
+            const moons = document.querySelectorAll('.icon-moon');
+            const suns = document.querySelectorAll('.icon-sun');
+            
+            moons.forEach(el => {
+                if(isDark) el.classList.add('hidden');
+                else el.classList.remove('hidden');
+            });
+            
+            suns.forEach(el => {
+                if(isDark) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            });
+        }
+
+        // Initialize icons on load
+        document.addEventListener('DOMContentLoaded', () => {
+            updateThemeIcons();
+            if(typeof lucide !== 'undefined') lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
