@@ -11,7 +11,7 @@
     <script>tailwind.config = { darkMode: 'class', theme: { extend: { colors: { dark: { bg: '#000000', card: '#111827' } } } } }</script>
     <style>
         body { font-family: 'Inter', sans-serif; } 
-        ::-webkit-scrollbar { width: 6px; } 
+        ::-webkit-scrollbar { width: 4px; } 
         ::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; } 
         input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; } 
         .hidden { display: none !important; } 
@@ -22,26 +22,33 @@
             background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
             background-position: right 0.5rem center;
             background-repeat: no-repeat;
-            background-size: 1.5em 1.5em;
+            background-size: 1.2em 1.2em;
         }
     </style>
 
+    <!-- IMMEDIATE THEME INIT (PREVENTS FLASH) -->
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem('theme');
+            const isDark = savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        })();
+    </script>
+
     <!-- FIREBASE & AUTH GUARD -->
     <script type="module">
-        // IMPORT CONFIG FROM SEPARATE FILE
         import { auth, db } from "./firebase-config.js";
         
         import { 
             onAuthStateChanged, 
             signOut, 
-            updateProfile, 
-            updatePassword, 
-            reauthenticateWithCredential, 
-            EmailAuthProvider,
-            sendPasswordResetEmail,
-            deleteUser
+            sendPasswordResetEmail
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { doc, setDoc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Exports
         window.auth = auth;
@@ -53,7 +60,6 @@
                 window.showConfirmModal(
                     "Sign Out", 
                     "Are you sure you want to sign out?", 
-                    // Redirect to index.html (Login Page)
                     () => signOut(auth).then(() => window.location.href = 'index.html')
                 );
             } else {
@@ -76,10 +82,24 @@
         window.saveProfileChanges = saveProfileChanges;
         window.handleDeleteAccount = handleDeleteAccount;
 
+        // DATA SYNC LOGIC (CONFLICT RESOLUTION)
+        window.saveData = async () => {
+            // Update timestamp first to claim this version is "newest"
+            window.state.lastUpdated = Date.now();
+            localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+            
+            const user = auth.currentUser;
+            if (user) {
+                try {
+                    await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'), window.state);
+                    console.log("Cloud Save Success");
+                } catch (e) { console.error("Cloud Save Error:", e); }
+            }
+        };
+
         // AUTH GUARD & DATA LOADER
         onAuthStateChanged(auth, async (user) => {
             if (!user) {
-                // Redirect to index.html if no user
                 window.location.href = 'index.html';
             } else {
                 console.log("Logged in:", user.email);
@@ -90,19 +110,43 @@
                     const docSnap = await getDoc(docRef);
                     
                     if (docSnap.exists()) {
-                        window.state = { ...window.state, ...docSnap.data() };
+                        const cloudData = docSnap.data();
+                        const localData = window.state || {};
+                        
+                        const cloudTime = cloudData.lastUpdated || 0;
+                        const localTime = localData.lastUpdated || 0;
+
+                        const isLocalEmpty = (!localData.accounts || localData.accounts.length === 0) && 
+                                             (!localData.expenses || localData.expenses.length === 0);
+                        
+                        const isCloudHasData = (cloudData.accounts && cloudData.accounts.length > 0);
+
+                        if (isLocalEmpty && isCloudHasData) {
+                             console.log("Sync: Local is empty. Force pulling from Cloud.");
+                             window.state = { ...cloudData };
+                             localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+                        } else if (cloudTime > localTime) {
+                            console.log("Sync: Cloud is newer. Updating local.");
+                            window.state = { ...window.state, ...cloudData };
+                            localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+                        } else if (localTime > cloudTime) {
+                            console.log("Sync: Local is newer. Pushing to cloud.");
+                            window.saveData(); 
+                        } else {
+                            if(!window.state || Object.keys(window.state).length === 0) {
+                                window.state = { ...cloudData };
+                            }
+                        }
+                        
                         if(window.updateGreeting) window.updateGreeting(true, user);
                     } else {
-                        if(window.state) {
-                            window.state.accounts = [];
-                            window.state.expenses = [];
-                            window.state.savings = [];
-                            window.state.allocations = [];
-                            window.state.transfers = [];
-                            window.state.savingsHistory = [];
-                            window.state.income = 0;
+                        if(!window.state) {
+                            window.state = {
+                                accounts: [], expenses: [], savings: [], allocations: [], 
+                                transfers: [], savingsHistory: [], income: 0, lastUpdated: Date.now()
+                            };
                         }
-                        saveData();
+                        saveData(); 
                         if(window.updateGreeting) window.updateGreeting(false, user);
                     }
                     if(window.renderApp) window.renderApp();
@@ -111,580 +155,381 @@
                 }
             }
         });
-
-        window.saveData = async () => {
-            localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
-            const user = auth.currentUser;
-            if (user) {
-                try {
-                    await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'), window.state);
-                } catch (e) { console.error("Cloud Save Error:", e); }
-            }
-        };
-
-        // --- PROFILE EDIT LOGIC ---
-        async function saveProfileChanges() {
-            const user = auth.currentUser;
-            if (!user) return;
-
-            const btn = document.getElementById('btn-save-profile');
-            const originalText = btn.innerText;
-            btn.innerText = "Saving...";
-            btn.disabled = true;
-
-            const newName = document.getElementById('edit-username').value;
-            const newPass = document.getElementById('edit-new-password').value;
-            const currPass = document.getElementById('edit-current-password').value;
-
-            try {
-                if (newPass) {
-                    if(user.providerData.some(p => p.providerId === 'password')) {
-                        if (!currPass) throw new Error("Current password is required to set a new one.");
-                        const cred = EmailAuthProvider.credential(user.email, currPass);
-                        await reauthenticateWithCredential(user, cred);
-                    }
-                    await updatePassword(user, newPass);
-                }
-
-                if (newName && newName !== user.displayName) {
-                    await updateProfile(user, { displayName: newName });
-                    window.updateGreeting(true, { ...user, displayName: newName });
-                    window.updateUserProfileUI({ ...user, displayName: newName });
-                }
-
-                window.showCustomAlert("Success", "Profile updated successfully.");
-                
-                // Clear fields
-                document.getElementById('edit-current-password').value = ''; 
-                document.getElementById('edit-new-password').value = '';
-                document.getElementById('password-fields').classList.add('hidden');
-                document.getElementById('user-modal').classList.add('hidden');
-
-            } catch (e) {
-                console.error(e);
-                let msg = e.message;
-                if(e.code === 'auth/wrong-password') msg = "Incorrect current password.";
-                if(e.code === 'auth/weak-password') msg = "New password is too weak (min 6 chars).";
-                window.showCustomAlert("Update Failed", msg);
-            } finally {
-                btn.innerText = originalText;
-                btn.disabled = false;
-            }
-        }
-
-        async function handleDeleteAccount() {
-            window.showConfirmModal(
-                "DELETE ACCOUNT",
-                "WARNING: This will permanently delete your account and ALL your data. This action cannot be undone. Are you absolutely sure?",
-                async () => {
-                    const user = auth.currentUser;
-                    try {
-                        await deleteDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'));
-                        await deleteUser(user);
-                        window.showCustomAlert("Account Deleted", "Your account has been deleted. Redirecting...");
-                        // Redirect to index.html
-                        setTimeout(() => window.location.href = 'index.html', 2000);
-                    } catch (e) {
-                        if(e.code === 'auth/requires-recent-login') {
-                            window.showCustomAlert("Security Check", "Please sign out and sign in again before deleting your account for security reasons.");
-                        } else {
-                            window.showCustomAlert("Error", "Error deleting account: " + e.message);
-                        }
-                    }
-                }
-            );
-        }
     </script>
 </head>
-<body class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex justify-center min-h-screen p-4 transition-colors duration-300">
+<!-- Removed 'transition-colors duration-300' to prevent black flash on load -->
+<body class="bg-gray-100 dark:bg-gray-950 text-gray-900 dark:text-gray-100 flex justify-center min-h-screen p-2 text-[10px]">
 
-    <div class="w-full max-w-[1400px] bg-white dark:bg-black min-h-[90vh] shadow-2xl relative border border-gray-200 dark:border-gray-800 rounded-3xl flex flex-col md:flex-row overflow-hidden my-auto z-10">
+    <div class="w-full max-w-6xl bg-white dark:bg-black min-h-[90vh] shadow-2xl relative border border-gray-200 dark:border-gray-800 rounded-3xl flex flex-col md:flex-row overflow-hidden my-auto z-10">
         
-        <aside class="w-full md:w-80 lg:w-96 bg-gray-50/80 dark:bg-gray-900/50 border-r border-gray-200 dark:border-gray-800 p-6 flex flex-col relative overflow-y-auto">
+        <!-- SIDEBAR -->
+        <aside class="w-full md:w-64 lg:w-72 bg-gray-50/80 dark:bg-gray-900/50 border-r border-gray-200 dark:border-gray-800 p-4 flex flex-col relative overflow-y-auto">
             
-            <!-- HEADER: APP NAME & LOGO -->
-            <div class="flex justify-between items-center mb-4">
-                <div class="flex items-center gap-3">
-                    <img src="images/fundflow-logo.png" alt="Logo" class="w-10 h-10 object-contain drop-shadow-sm hover:scale-105 transition-transform">
+            <!-- HEADER -->
+            <div class="flex justify-between items-center mb-3">
+                <div class="flex items-center gap-2">
+                    <img src="images/fundflow-logo.png" alt="Logo" class="w-5 h-5 object-contain drop-shadow-sm hover:scale-105 transition-transform">
                     <div>
-                        <h1 class="text-lg font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-blue-600">FUND FLOW</h1>
-                        <p class="text-[9px] text-gray-500 uppercase tracking-widest leading-none">Finance Manager</p>
+                        <h1 class="text-xs font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 to-blue-600">FUND FLOW</h1>
+                        <p class="text-[7px] text-gray-500 uppercase tracking-widest leading-none">Finance Manager</p>
                     </div>
                 </div>
-                <!-- Mini Buttons -->
                 <div class="flex gap-1">
-                    <button onclick="toggleTheme()" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
-                        <i data-lucide="moon" class="icon-moon w-4 h-4 hidden"></i>
-                        <i data-lucide="sun" class="icon-sun w-4 h-4 hidden"></i>
+                    <button onclick="toggleTheme()" class="p-1.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
+                         <i data-lucide="moon" class="icon-moon w-3 h-3 hidden"></i>
+                         <i data-lucide="sun" class="icon-sun w-3 h-3 hidden"></i>
                     </button>
-                    <button onclick="toggleSettings(true)" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
-                        <i data-lucide="settings" class="w-4 h-4"></i>
+                    <!-- SETTINGS TOGGLE (Uses settings.js) -->
+                    <button onclick="toggleSettings(true)" class="p-1.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-cyan-500 transition-colors">
+                        <i data-lucide="settings" class="w-3 h-3"></i>
                     </button>
-                    <!-- LOGOUT BUTTON -->
-                    <button onclick="logout()" class="p-2 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors" title="Sign Out">
-                        <i data-lucide="log-out" class="w-4 h-4"></i>
+                    <button onclick="logout()" class="p-1.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors" title="Sign Out">
+                        <i data-lucide="log-out" class="w-3 h-3"></i>
                     </button>
                 </div>
             </div>
 
-             <div class="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-2xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm mb-6 relative overflow-hidden">
-                <label class="text-gray-500 dark:text-gray-400 text-[10px] font-medium uppercase tracking-wider mb-1 block">Liquid Assets</label>
-                <div class="flex items-center pb-2 mb-3">
-                    <span id="total-assets-display" class="text-3xl font-bold text-gray-900 dark:text-white">₱0</span>
+             <!-- ADJUSTED SIDEBAR CARD TO MATCH SAVINGS.HTML (p-3) -->
+             <div class="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl p-3 border border-gray-200 dark:border-gray-700 shadow-sm relative overflow-hidden mb-3">
+                <label class="text-gray-500 dark:text-gray-400 text-[9px] font-medium uppercase tracking-wider mb-0.5 block">Liquid Assets</label>
+                <div class="flex items-center border-b border-gray-200 dark:border-gray-600 pb-1 mb-1">
+                    <span id="total-assets-display" class="bg-transparent text-lg font-bold w-full focus:outline-none placeholder-gray-300 dark:placeholder-gray-700">₱0</span>
                 </div>
-                 <div class="flex justify-between items-center text-xs p-2 bg-gray-100 dark:bg-black/20 rounded-lg">
+                 <div class="flex justify-between items-center text-[9px] p-1.5 bg-gray-100 dark:bg-black/20 rounded-lg">
                     <span class="text-gray-500 dark:text-gray-400">Cash + Banks + Goals</span>
                 </div>
             </div>
 
             <div class="flex-1">
-                <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-cyan-600 dark:text-cyan-400 text-xs font-bold flex items-center gap-2"><i data-lucide="activity" class="w-4 h-4"></i> Credit & Payables</h3>
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-cyan-600 dark:text-cyan-400 text-[9px] font-bold flex items-center gap-1.5"><i data-lucide="activity" class="w-3 h-3"></i> Credit & Payables</h3>
                 </div>
-                
-                <div id="credit-stats-container" class="space-y-3"></div>
+                <!-- Container for Credit Stats (Now a single card style) -->
+                <div id="credit-stats-container" class="space-y-2"></div>
             </div>
         </aside>
 
-        <main class="flex-1 p-6 lg:p-8 overflow-y-auto pb-20 bg-white dark:bg-black relative">
-            <!-- UPDATED HEADER: Smaller title on mobile, Icon Buttons on mobile -->
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-base md:text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-200">
-                    <i data-lucide="wallet" class="text-cyan-500 w-5 h-5"></i> 
-                    <span>My Accounts</span>
-                </h2>
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 p-4 lg:p-6 overflow-y-auto pb-20 bg-white dark:bg-black relative">
+            <div class="flex justify-between items-center mb-4">
+                <div>
+                    <h2 class="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                        <i data-lucide="wallet" class="text-cyan-500 w-4 h-4"></i> 
+                        <span>My Accounts</span>
+                    </h2>
+                    <!-- Added Description -->
+                    <p class="text-[9px] text-gray-500 mt-0.5">Manage your bank accounts, wallets, and credit cards.</p>
+                </div>
                 <div class="flex gap-2">
-                    <button onclick="openTransferModal()" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold p-2 sm:py-2 sm:px-3 rounded-lg flex items-center gap-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all" title="Transfer">
-                        <i data-lucide="arrow-right-left" class="w-4 h-4"></i> 
+                    <button onclick="openTransferModal()" class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-[10px] font-bold p-1.5 px-2 rounded-lg flex items-center gap-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 transition-all" title="Transfer">
+                        <i data-lucide="arrow-right-left" class="w-3 h-3"></i> 
                         <span class="hidden sm:inline">Transfer</span>
                     </button>
-                    <button onclick="openAddAccountModal()" class="bg-gray-900 dark:bg-white text-white dark:text-black text-xs font-bold p-2 sm:py-2 sm:px-3 rounded-lg flex items-center gap-2 shadow-lg transition-all" title="Add Account">
-                        <i data-lucide="plus" class="w-4 h-4"></i> 
+                    <button onclick="openAddAccountModal()" class="bg-gray-900 dark:bg-white text-white dark:text-black text-[10px] font-bold p-1.5 px-2 rounded-lg flex items-center gap-1.5 shadow-lg transition-all" title="Add Account">
+                        <i data-lucide="plus" class="w-3 h-3"></i> 
                         <span class="hidden sm:inline">Add Account</span>
                     </button>
                 </div>
             </div>
             
-            <div class="space-y-8">
+            <div class="space-y-6">
+                <!-- Daily / Wallet Section -->
                 <div>
-                    <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-2"><i data-lucide="banknote" class="w-4 h-4"></i> Liquid Assets (Cash & Banks)</h3>
-                    <div id="accounts-liquid-list" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                    <h3 class="text-[10px] font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="banknote" class="w-3 h-3"></i> Daily / Wallet</h3>
+                    <div id="accounts-daily-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
                 </div>
 
+                <!-- Savings Section -->
                 <div>
-                    <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-2"><i data-lucide="credit-card" class="w-4 h-4"></i> Credit Cards & Loans</h3>
-                    <div id="accounts-credit-list" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                    <h3 class="text-[10px] font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="piggy-bank" class="w-3 h-3"></i> Savings & Goals</h3>
+                    <div id="accounts-savings-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
+                </div>
+
+                <!-- Credit Section -->
+                <div>
+                    <h3 class="text-[10px] font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="credit-card" class="w-3 h-3"></i> Credit Cards & Loans</h3>
+                    <div id="accounts-credit-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3"></div>
                 </div>
             </div>
 
-            <div class="fixed bottom-14 left-0 right-0 md:left-80 lg:left-96 flex justify-center z-50 pointer-events-none">
-                <nav class="bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200 dark:border-gray-800 shadow-2xl rounded-full px-6 py-3 flex items-center gap-2 pointer-events-auto transition-all hover:scale-105">
-                    <a href="dashboard.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="layout-dashboard" class="w-5 h-5 mb-0.5"></i>
-                        <span class="text-[9px] font-medium">Home</span>
+            <!-- NAVBAR -->
+            <div class="fixed bottom-14 left-0 right-0 md:left-56 lg:left-64 flex justify-center z-50 pointer-events-none">
+                <nav class="bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200 dark:border-gray-800 shadow-2xl rounded-full px-4 py-2 flex items-center gap-1 pointer-events-auto transition-all hover:scale-105">
+                    <a href="dashboard.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="layout-dashboard" class="w-3 h-3 mb-0.5"></i>
+                        <span class="text-[7px] font-medium">Home</span>
                     </a>
-                    <a href="index.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="pie-chart" class="w-5 h-5 mb-0.5"></i>
-                        <span class="text-[9px] font-medium">Budget</span>
+                    <a href="budget.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="pie-chart" class="w-3 h-3 mb-0.5"></i>
+                        <span class="text-[7px] font-medium">Budget</span>
                     </a>
-                    <a href="savings.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="piggy-bank" class="w-5 h-5 mb-0.5"></i>
-                        <span class="text-[9px] font-medium">Save</span>
+                    <a href="savings.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="piggy-bank" class="w-3 h-3 mb-0.5"></i>
+                        <span class="text-[7px] font-bold">Save</span>
                     </a>
-                    <a href="accounts.html" class="flex flex-col items-center justify-center w-16 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400 transition-all">
-                        <i data-lucide="wallet" class="w-5 h-5 mb-0.5"></i>
-                        <span class="text-[9px] font-bold">Wallet</span>
+                    <a href="accounts.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400 transition-all">
+                        <i data-lucide="wallet" class="w-3 h-3 mb-0.5"></i>
+                        <span class="text-[7px] font-medium">Wallet</span>
                     </a>
                 </nav>
             </div>
         </main>
     </div>
     
-    <!-- ACCOUNT MODALS (unchanged except for consistent styling if needed) -->
-    <!-- ... (Account details, Add Account, etc. remain the same structure, just wrapped in the same style if modified) ... -->
+    <!-- ACCOUNT DETAILS MODAL (Compact) -->
     <div id="account-details-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-2xl p-6 shadow-2xl animate-fade-in flex flex-col max-h-[90vh]">
-            <div class="flex justify-between items-center mb-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-md rounded-2xl p-5 shadow-2xl animate-fade-in flex flex-col max-h-[85vh]">
+            <div class="flex justify-between items-center mb-3 pb-3 border-b border-gray-100 dark:border-gray-800">
                 <div>
-                    <h3 id="details-account-name" class="font-bold text-lg text-gray-900 dark:text-white">Account Details</h3>
-                    <p id="details-account-type" class="text-xs text-gray-500">Savings Account</p>
+                    <h3 id="details-account-name" class="font-bold text-base text-gray-900 dark:text-white">Account Details</h3>
+                    <p id="details-account-type" class="text-[10px] text-gray-500">Savings Account</p>
                 </div>
                 <div class="flex gap-2">
-                    <button id="btn-edit-from-details" class="p-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors">
-                        <i data-lucide="edit-2" class="w-4 h-4"></i>
+                    <button id="btn-edit-from-details" class="p-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors">
+                        <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
                     </button>
                     <button onclick="closeAccountDetailsModal()" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
-                        <i data-lucide="x" class="w-5 h-5"></i>
+                        <i data-lucide="x" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
             
-            <div class="overflow-y-auto flex-1 pr-1 space-y-6">
-                <div class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-700">
-                    <span class="block text-xs text-gray-500 uppercase tracking-wider mb-1" id="details-balance-label">Current Balance</span>
-                    <span id="details-account-balance" class="block text-3xl font-bold text-gray-900 dark:text-white tracking-tight">₱0.00</span>
+            <div class="overflow-y-auto flex-1 pr-1 space-y-4">
+                <div class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-700">
+                    <span class="block text-[10px] text-gray-500 uppercase tracking-wider mb-0.5" id="details-balance-label">Current Balance</span>
+                    <span id="details-account-balance" class="block text-2xl font-bold text-gray-900 dark:text-white tracking-tight">₱0.00</span>
                 </div>
 
-                <div id="details-credit-breakdown" class="hidden grid grid-cols-3 gap-2 text-center bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 border border-gray-200 dark:border-gray-800">
+                <div id="details-credit-breakdown" class="hidden grid grid-cols-3 gap-2 text-center bg-gray-50 dark:bg-gray-800/50 rounded-xl p-2 border border-gray-200 dark:border-gray-800">
                     <div>
-                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Installment</span>
-                        <span id="details-installment" class="text-sm font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
+                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Installment</span>
+                        <span id="details-installment" class="text-xs font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
                     </div>
                     <div class="border-x border-gray-200 dark:border-gray-700">
-                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Current Bill</span>
-                        <span id="details-current-bill" class="text-sm font-bold text-cyan-600 dark:text-cyan-400 truncate block">₱0</span>
+                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Current Bill</span>
+                        <span id="details-current-bill" class="text-xs font-bold text-cyan-600 dark:text-cyan-400 truncate block">₱0</span>
                     </div>
                     <div>
-                        <span class="block text-[10px] text-gray-500 uppercase mb-1">Upcoming</span>
-                        <span id="details-upcoming" class="text-sm font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
+                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Upcoming</span>
+                        <span id="details-upcoming" class="text-xs font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
                     </div>
                 </div>
 
                 <div>
-                    <h4 class="text-xs font-bold text-gray-500 mb-3 flex items-center gap-2 uppercase tracking-wider"><i data-lucide="history" class="w-4 h-4"></i> Recent Transactions</h4>
-                    <div id="account-history-list" class="space-y-2"></div>
+                    <h4 class="text-[10px] font-bold text-gray-500 mb-2 flex items-center gap-1.5 uppercase tracking-wider"><i data-lucide="history" class="w-3 h-3"></i> Recent Transactions</h4>
+                    <div id="account-history-list" class="space-y-1.5"></div>
                 </div>
             </div>
 
-            <div id="details-credit-actions" class="hidden mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                <button onclick="closeAccountDetailsModal(); openInstallmentModal(currentViewingAccountId)" class="w-full bg-gray-900 dark:bg-white text-white dark:text-black font-bold py-3 rounded-xl hover:opacity-90 transition-opacity">Add Installment / Loan</button>
+            <div id="details-credit-actions" class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button onclick="closeAccountDetailsModal(); openInstallmentModal(currentViewingAccountId)" class="w-full bg-gray-900 dark:bg-white text-white dark:text-black font-bold py-2.5 rounded-xl text-xs hover:opacity-90 transition-opacity">Add Installment / Loan</button>
             </div>
         </div>
     </div>
 
-    <!-- USER PROFILE / EDIT MODAL -->
+    <!-- USER PROFILE / EDIT MODAL (Compact) -->
     <div id="user-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-fade-in relative">
-            <button onclick="document.getElementById('user-modal').classList.add('hidden')" class="absolute top-4 right-4 text-gray-500 hover:text-gray-900 dark:hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-fade-in relative">
+            <button onclick="document.getElementById('user-modal').classList.add('hidden')" class="absolute top-4 right-4 text-gray-500 hover:text-gray-900 dark:hover:text-white"><i data-lucide="x" class="w-4 h-4"></i></button>
             
             <div class="flex flex-col items-center mb-4">
-                <div class="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center text-white text-2xl font-bold mb-2 shadow-lg" id="profile-initial">U</div>
-                <h3 class="text-xl font-bold text-gray-900 dark:text-white" id="profile-name">User</h3>
-                <p class="text-xs text-gray-500 dark:text-gray-400" id="profile-email">email@example.com</p>
+                <div class="w-12 h-12 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center text-white text-lg font-bold mb-2 shadow-lg" id="profile-initial">U</div>
+                <h3 class="text-base font-bold text-gray-900 dark:text-white" id="profile-name">User</h3>
+                <p class="text-[10px] text-gray-500 dark:text-gray-400" id="profile-email">email@example.com</p>
             </div>
 
-            <div class="space-y-4">
-                <!-- Username Edit -->
+            <div class="space-y-3">
                 <div>
-                    <label class="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1 ml-1">Username / Display Name</label>
-                    <input type="text" id="edit-username" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none focus:border-cyan-500 transition-all">
+                    <label class="block text-[10px] font-bold text-gray-500 dark:text-gray-400 mb-1 ml-1">Username</label>
+                    <input type="text" id="edit-username" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500 transition-all">
                 </div>
 
-                <!-- Password Toggle -->
                 <div>
-                    <button type="button" onclick="document.getElementById('password-fields').classList.toggle('hidden')" class="text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1">
+                    <button type="button" onclick="document.getElementById('password-fields').classList.toggle('hidden')" class="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1">
                         <i data-lucide="lock" class="w-3 h-3"></i> Change Password?
                     </button>
                     
-                    <div id="password-fields" class="hidden mt-3 space-y-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-100 dark:border-gray-800">
+                    <div id="password-fields" class="hidden mt-2 space-y-2 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-100 dark:border-gray-800">
                         <div>
-                            <label class="block text-[10px] font-bold text-gray-400 mb-1 ml-1">CURRENT PASSWORD (Required)</label>
-                            <input type="password" id="edit-current-password" placeholder="Verify it's you" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 text-sm dark:text-white outline-none focus:border-red-500 transition-all">
+                            <input type="password" id="edit-current-password" placeholder="Current Password" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-red-500 transition-all">
                         </div>
                         <div>
-                            <label class="block text-[10px] font-bold text-gray-400 mb-1 ml-1">NEW PASSWORD</label>
-                            <input type="password" id="edit-new-password" placeholder="Minimum 6 characters" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 text-sm dark:text-white outline-none focus:border-cyan-500 transition-all">
+                            <input type="password" id="edit-new-password" placeholder="New Password" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500 transition-all">
                         </div>
                         
-                        <!-- FORGOT PASSWORD LINK -->
                         <div class="pt-1 text-center">
-                            <button type="button" onclick="handleForgotPassword()" class="text-[10px] text-gray-500 hover:text-cyan-500 hover:underline">
+                            <button type="button" onclick="handleForgotPassword()" class="text-[9px] text-gray-500 hover:text-cyan-500 hover:underline">
                                 Forgot password? Send reset email
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <button id="btn-save-profile" onclick="saveProfileChanges()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/20">
+                <button id="btn-save-profile" onclick="saveProfileChanges()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-lg shadow-cyan-500/20">
                     Save Changes
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- ADD ACCOUNT MODAL -->
+    <!-- ADD ACCOUNT MODAL (Compact) -->
     <div id="add-account-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-2xl p-6 shadow-2xl animate-fade-in">
-            <div class="flex justify-between items-center mb-4">
-                <h3 id="modal-account-title" class="font-bold text-lg text-gray-900 dark:text-white">Add New Account</h3>
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-4 shadow-2xl animate-fade-in">
+            <div class="flex justify-between items-center mb-3">
+                <h3 id="modal-account-title" class="font-bold text-base text-gray-900 dark:text-white">Add New Account</h3>
                 <button onclick="closeAddAccountModal()" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
-                    <i data-lucide="x" class="w-5 h-5"></i>
+                    <i data-lucide="x" class="w-4 h-4"></i>
                 </button>
             </div>
-            <div class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Account Name</label>
-                        <input type="text" id="new-account-name" placeholder="e.g. My BPI" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        <label class="block text-[10px] text-gray-500 mb-1">Account Name</label>
+                        <input type="text" id="new-account-name" placeholder="e.g. My BPI" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1" id="balance-label">Current Balance</label>
-                        <input type="number" id="new-account-balance" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        <label class="block text-[10px] text-gray-500 mb-1" id="balance-label">Current Balance</label>
+                        <input type="number" id="new-account-balance" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-xs text-gray-500 mb-2">Account Type (Tag)</label>
+                    <label class="block text-[10px] text-gray-500 mb-1.5">Account Type (Tag)</label>
                     <div class="grid grid-cols-3 gap-2">
                         <label class="cursor-pointer">
                             <input type="radio" name="account-tag" value="daily" class="peer sr-only">
-                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-green-100 peer-checked:border-green-500 peer-checked:text-green-700 dark:peer-checked:bg-green-900/30 dark:peer-checked:text-green-300 text-xs font-medium transition-all">
-                                Daily (Budget)
+                            <div class="text-center py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-green-100 peer-checked:border-green-500 peer-checked:text-green-700 dark:peer-checked:bg-green-900/30 dark:peer-checked:text-green-300 text-[10px] font-medium transition-all">
+                                Daily
                             </div>
                         </label>
                         <label class="cursor-pointer">
                             <input type="radio" name="account-tag" value="savings" class="peer sr-only">
-                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-cyan-100 peer-checked:border-cyan-500 peer-checked:text-cyan-700 dark:peer-checked:bg-cyan-900/30 dark:peer-checked:text-cyan-300 text-xs font-medium transition-all">
+                            <div class="text-center py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-cyan-100 peer-checked:border-cyan-500 peer-checked:text-cyan-700 dark:peer-checked:bg-cyan-900/30 dark:peer-checked:text-cyan-300 text-[10px] font-medium transition-all">
                                 Savings
                             </div>
                         </label>
                         <label class="cursor-pointer">
                             <input type="radio" name="account-tag" value="credit" class="peer sr-only">
-                            <div class="text-center py-2 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-red-100 peer-checked:border-red-500 peer-checked:text-red-700 dark:peer-checked:bg-red-900/30 dark:peer-checked:text-red-300 text-xs font-medium transition-all">
-                                Credit/Bill
+                            <div class="text-center py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 peer-checked:bg-red-100 peer-checked:border-red-500 peer-checked:text-red-700 dark:peer-checked:bg-red-900/30 dark:peer-checked:text-red-300 text-[10px] font-medium transition-all">
+                                Credit
                             </div>
                         </label>
                     </div>
                 </div>
                 
-                <div id="credit-fields" class="hidden space-y-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <div id="credit-fields" class="hidden space-y-2 pt-2 border-t border-gray-100 dark:border-gray-800">
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Credit Limit</label>
-                        <input type="number" id="new-account-limit" placeholder="e.g. 30000" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                        <label class="block text-[10px] text-gray-500 mb-1">Credit Limit</label>
+                        <input type="number" id="new-account-limit" placeholder="e.g. 30000" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 gap-3">
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Statement Date (Day)</label>
-                            <input type="number" id="new-account-statement" placeholder="e.g. 5" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                            <label class="block text-[10px] text-gray-500 mb-1">Statement Day</label>
+                            <input type="number" id="new-account-statement" placeholder="e.g. 5" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-500 mb-1">Due Date (Day)</label>
-                            <input type="number" id="new-account-due" placeholder="e.g. 25" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                            <label class="block text-[10px] text-gray-500 mb-1">Due Day</label>
+                            <input type="number" id="new-account-due" placeholder="e.g. 25" min="1" max="31" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
                         </div>
                     </div>
                 </div>
 
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1">Provider</label>
-                    <input type="text" id="account-provider-search" oninput="renderAccountProviderGrid()" placeholder="Search..." class="w-full mb-2 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500">
-                    <div class="h-32 overflow-y-auto border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/50 p-2">
-                        <div id="account-provider-grid" class="grid grid-cols-3 gap-2"></div>
+                    <label class="block text-[10px] text-gray-500 mb-1">Select Provider</label>
+                    <input type="text" id="account-provider-search" oninput="renderAccountProviderGrid()" placeholder="Search..." class="w-full mb-2 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-[10px] dark:text-white outline-none focus:border-cyan-500">
+                    <div class="h-32 overflow-y-auto border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/50 p-1.5 custom-scrollbar">
+                        <div id="account-provider-grid" class="grid grid-cols-2 gap-1.5"></div>
                     </div>
                 </div>
                 
                 <div class="flex gap-2 pt-2 justify-end">
-                    <button id="btn-save-account" onclick="submitNewAccount()" class="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl">Save Changes</button>
-                    <button id="btn-delete-account" onclick="deleteCurrentAccount()" class="hidden p-3 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                    <button id="btn-save-account" onclick="submitNewAccount()" class="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 rounded-xl text-xs">Save</button>
+                    <button id="btn-delete-account" onclick="deleteCurrentAccount()" class="hidden p-2.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- SETTINGS MODAL (New Expanded Version) -->
-    <div id="settings-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-lg rounded-3xl p-6 shadow-2xl animate-fade-in flex flex-col h-auto max-h-[85vh]">
-            <div class="flex justify-between items-center mb-6 pb-2 border-b border-gray-100 dark:border-gray-800">
-                <div class="flex items-center gap-2">
-                    <div class="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg"><i data-lucide="settings" class="w-5 h-5 text-gray-500 dark:text-white"></i></div>
-                    <h3 class="font-bold text-lg dark:text-white">App Settings</h3>
-                </div>
-                <button onclick="toggleSettings(false)" class="text-gray-400 hover:text-gray-900 dark:hover:text-white"><i data-lucide="x" class="w-6 h-6"></i></button>
-            </div>
-            
-            <div class="overflow-y-auto pr-2 space-y-6">
-                
-                <!-- Financial Report Section -->
-                <div class="bg-gradient-to-r from-cyan-50 to-blue-50 dark:from-cyan-900/10 dark:to-blue-900/10 p-5 rounded-2xl border border-cyan-100 dark:border-cyan-900/30">
-                    <h4 class="text-xs font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <i data-lucide="file-text" class="w-4 h-4"></i> Statement of Account
-                    </h4>
-                    
-                    <div class="grid grid-cols-2 gap-3 mb-3">
-                        <div class="col-span-2">
-                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Select Period Type</label>
-                            <select id="report-type-selector" onchange="toggleReportInputs()" class="custom-select w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none cursor-pointer">
-                                <option value="standard">Standard (Week/Month/All)</option>
-                                <option value="specific-month">Specific Month</option>
-                                <option value="custom">Custom Date Range</option>
-                            </select>
-                        </div>
+    <!-- SETTINGS MODAL HAS BEEN REMOVED AND MOVED TO settings.js -->
 
-                        <!-- Standard Inputs -->
-                        <div id="report-input-standard" class="col-span-2">
-                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Range</label>
-                            <select id="report-range" class="custom-select w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
-                                <option value="week">Current Week</option>
-                                <option value="month">Current Month</option>
-                                <option value="all">All Time History</option>
-                            </select>
-                        </div>
-
-                        <!-- Specific Month Input -->
-                        <div id="report-input-month" class="hidden col-span-2">
-                            <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">Select Month</label>
-                            <input type="month" id="report-month-val" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
-                        </div>
-
-                        <!-- Custom Range Inputs -->
-                        <div id="report-input-custom" class="hidden col-span-2 grid-cols-2 gap-2">
-                            <div>
-                                <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">From</label>
-                                <input type="date" id="report-start" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
-                            </div>
-                            <div>
-                                <label class="block text-[10px] font-bold text-gray-400 mb-1 uppercase tracking-wider">To</label>
-                                <input type="date" id="report-end" class="w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-2.5 text-sm dark:text-white outline-none">
-                            </div>
-                        </div>
-                    </div>
-
-                    <button onclick="generateReport()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 transition-all">
-                        <i data-lucide="printer" class="w-4 h-4"></i> Generate & Print Report
-                    </button>
-                </div>
-
-                <!-- General Preferences -->
-                <div>
-                    <h4 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Preferences</h4>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="col-span-2">
-                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Dashboard Payable View</label>
-                            <select id="setting-dashboard-view" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 dark:text-white focus:border-cyan-500 outline-none transition-colors">
-                                <option value="weekly">This Week</option>
-                                <option value="monthly">This Month</option>
-                            </select>
-                        </div>
-                        
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Recurring Income</label>
-                            <div class="relative">
-                                <span class="absolute left-3 top-3 text-gray-400 text-xs">₱</span>
-                                <input type="number" id="setting-amount" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl py-3 pl-6 pr-3 text-sm dark:text-white focus:border-cyan-500 outline-none transition-colors">
-                            </div>
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Frequency</label>
-                            <select id="setting-frequency" onchange="updateSettingsUI()" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white focus:border-cyan-500 outline-none transition-colors">
-                                <option value="weekly">Weekly</option>
-                                <option value="semi-monthly">Semi-Monthly</option>
-                                <option value="monthly">Monthly</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div id="setting-weekly-container" class="mt-3">
-                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Day of Week</label>
-                        <select id="setting-day" class="custom-select w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none">
-                            <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
-                        </select>
-                    </div>
-                    <div id="setting-monthly-container" class="hidden mt-3">
-                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Day of Month</label>
-                        <input type="number" id="setting-date" min="1" max="31" class="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3 text-sm dark:text-white outline-none">
-                    </div>
-                </div>
-
-                <!-- Data Management -->
-                <div class="pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2">
-                    <h4 class="text-xs font-bold text-red-500 uppercase tracking-wider mb-3">Danger Zone</h4>
-                    
-                    <!-- RESET DATA (With Confirmation) -->
-                    <button onclick="window.showConfirmModal('Reset Data', 'Are you sure you want to delete ALL transactions and goals? This cannot be undone.', confirmResetData)" class="w-full bg-red-50 hover:bg-red-100 dark:bg-red-900/10 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 font-bold py-3.5 rounded-xl border border-red-100 dark:border-red-900/30 transition-colors text-xs flex items-center justify-center gap-2 group">
-                        <i data-lucide="trash-2" class="w-4 h-4 group-hover:scale-110 transition-transform"></i> Reset All Data
-                    </button>
-
-                    <!-- DELETE ACCOUNT (With Confirmation) -->
-                    <button onclick="handleDeleteAccount()" class="w-full bg-transparent hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 dark:text-red-500 font-bold py-3 rounded-xl border border-transparent hover:border-red-100 dark:hover:border-red-900/30 transition-colors text-xs flex items-center justify-center gap-2">
-                        <i data-lucide="user-x" class="w-4 h-4"></i> Delete Account
-                    </button>
-                </div>
-            </div>
-
-            <div class="pt-4 mt-2 border-t border-gray-200 dark:border-gray-700">
-                <button onclick="saveSettings()" class="w-full bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 font-bold py-3.5 rounded-xl transition-all shadow-lg">Save Changes</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- OTHER MODALS (Transfer, Installment) -->
+    <!-- OTHER MODALS (Transfer, Installment) - Compact -->
     <div id="transfer-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-md rounded-2xl p-6 shadow-2xl animate-fade-in flex flex-col h-auto">
-            <div class="flex justify-between items-center mb-6"><h3 class="font-bold text-lg dark:text-white">Transfer / Pay</h3><button onclick="closeTransferModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-fade-in flex flex-col h-auto">
+            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-base dark:text-white">Transfer / Pay</h3><button onclick="closeTransferModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
             
-            <div class="space-y-4 relative">
+            <div class="space-y-3 relative">
                 
                 <div class="relative z-[50]">
-                    <label class="block text-xs text-gray-500 mb-1 ml-1">From Account</label>
+                    <label class="block text-[10px] text-gray-500 mb-1 ml-1">From Account</label>
                     <div class="relative" id="transfer-from-container">
-                        <button onclick="toggleDropdown('transfer-from')" id="transfer-from-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[54px] shadow-sm group">
-                            <span class="text-gray-400 text-sm">Select Source</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
+                        <button onclick="toggleDropdown('transfer-from')" id="transfer-from-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[44px] shadow-sm group">
+                            <span class="text-gray-400 text-xs">Select Source</span>
+                            <i data-lucide="chevron-down" class="w-3 h-3 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
                         </button>
-                        <div id="transfer-from-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+8px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl max-h-64 overflow-y-auto hidden animate-fade-in w-full z-[60] p-2"></div>
+                        <div id="transfer-from-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+4px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-56 overflow-y-auto hidden animate-fade-in w-full z-[60] p-1.5"></div>
                         <input type="hidden" id="transfer-from-value">
                     </div>
                 </div>
 
-                <div class="flex justify-center relative z-0 -my-3 pointer-events-none">
-                    <div class="bg-gray-100 dark:bg-gray-800 p-2 rounded-full text-gray-400 dark:text-gray-500 shadow-sm border border-white dark:border-gray-700 relative z-10">
-                        <i data-lucide="arrow-down" class="w-4 h-4"></i>
+                <div class="flex justify-center relative z-0 -my-2.5 pointer-events-none">
+                    <div class="bg-gray-100 dark:bg-gray-800 p-1.5 rounded-full text-gray-400 dark:text-gray-500 shadow-sm border border-white dark:border-gray-700 relative z-10">
+                        <i data-lucide="arrow-down" class="w-3 h-3"></i>
                     </div>
                 </div>
 
                 <div class="relative z-[40]">
-                    <label class="block text-xs text-gray-500 mb-1 ml-1">To Account</label>
+                    <label class="block text-[10px] text-gray-500 mb-1 ml-1">To Account</label>
                     <div class="relative" id="transfer-to-container">
-                        <button onclick="toggleDropdown('transfer-to')" id="transfer-to-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[54px] shadow-sm group">
-                            <span class="text-gray-400 text-sm">Select Destination</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
+                        <button onclick="toggleDropdown('transfer-to')" id="transfer-to-btn" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl px-3 py-2.5 dark:text-white outline-none flex items-center justify-between cursor-pointer transition-all hover:border-cyan-500 relative text-left shadow-sm min-h-[44px] shadow-sm group">
+                            <span class="text-gray-400 text-xs">Select Destination</span>
+                            <i data-lucide="chevron-down" class="w-3 h-3 text-gray-400 pointer-events-none group-hover:text-cyan-500 transition-colors"></i>
                         </button>
-                        <div id="transfer-to-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+8px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl max-h-64 overflow-y-auto hidden animate-fade-in w-full z-[60] p-2"></div>
+                        <div id="transfer-to-dropdown" class="custom-dropdown-menu absolute left-0 right-0 top-[calc(100%+4px)] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl max-h-56 overflow-y-auto hidden animate-fade-in w-full z-[60] p-1.5"></div>
                         <input type="hidden" id="transfer-to-value">
                     </div>
                 </div>
 
                 <div class="relative z-10">
-                    <label class="block text-xs text-gray-500 mb-1 ml-1">Amount to Transfer</label>
+                    <label class="block text-[10px] text-gray-500 mb-1 ml-1">Amount to Transfer</label>
                     <div class="relative">
-                        <span class="absolute left-4 top-3.5 text-gray-400 font-bold">₱</span>
-                        <input type="number" id="transfer-amount" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl py-3 pl-8 pr-4 dark:text-white font-bold outline-none text-lg focus:border-cyan-500 transition-all">
+                        <span class="absolute left-3 top-3 text-gray-400 font-bold text-xs">₱</span>
+                        <input type="number" id="transfer-amount" placeholder="0.00" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-xl py-2.5 pl-6 pr-3 dark:text-white font-bold outline-none text-base focus:border-cyan-500 transition-all">
                     </div>
                     
                     <div id="transfer-smart-pay" class="hidden mt-2 flex gap-2 overflow-x-auto no-scrollbar">
-                         <button id="btn-pay-full" class="whitespace-nowrap px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-xs font-bold rounded-lg border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors flex items-center gap-1">
+                         <button id="btn-pay-full" class="whitespace-nowrap px-2 py-1 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-lg border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors flex items-center gap-1">
                             Pay Full Balance <span id="val-pay-full" class="font-normal opacity-80">(₱0)</span>
                          </button>
                     </div>
                 </div>
             </div>
 
-            <div class="pt-6 relative z-0">
-                <button onclick="submitTransfer()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3.5 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98]">Confirm Transfer</button>
+            <div class="pt-4 relative z-0">
+                <button onclick="submitTransfer()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-cyan-500/20 transition-all active:scale-[0.98] text-xs">Confirm Transfer</button>
             </div>
         </div>
     </div>
 
     <div id="installment-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-fade-in">
-            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-lg dark:text-white">Add Installment</h3><button onclick="closeInstallmentModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-5 shadow-2xl animate-fade-in">
+            <div class="flex justify-between items-center mb-4"><h3 class="font-bold text-base dark:text-white">Add Installment</h3><button onclick="closeInstallmentModal()" class="text-gray-500"><i data-lucide="x" class="w-5 h-5"></i></button></div>
             
-            <p class="text-xs text-gray-500 mb-4">Record a new loan or installment plan for this account.</p>
+            <p class="text-[10px] text-gray-500 mb-4">Record a new loan or installment plan for this account.</p>
 
-            <div class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
+            <div class="space-y-3">
+                <div class="grid grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Principal Amount</label>
-                        <input type="number" id="install-amount" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white font-bold outline-none focus:border-cyan-500" placeholder="0.00">
+                        <label class="block text-[10px] text-gray-500 mb-1">Principal Amount</label>
+                        <input type="number" id="install-amount" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 dark:text-white font-bold outline-none focus:border-cyan-500 text-xs" placeholder="0.00">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 mb-1">Total Interest</label>
-                        <input type="number" id="install-interest" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white font-bold outline-none focus:border-cyan-500" placeholder="0.00">
+                        <label class="block text-[10px] text-gray-500 mb-1">Total Interest</label>
+                        <input type="number" id="install-interest" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 dark:text-white font-bold outline-none focus:border-cyan-500 text-xs" placeholder="0.00">
                     </div>
                 </div>
                 <div>
-                    <label class="block text-xs text-gray-500 mb-1">Terms</label>
-                    <select id="install-terms" onchange="calculateInstallment()" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none focus:border-cyan-500">
+                    <label class="block text-[10px] text-gray-500 mb-1">Terms</label>
+                    <select id="install-terms" onchange="calculateInstallment()" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 dark:text-white outline-none focus:border-cyan-500 text-xs">
                         <option value="1">1 Month (Next Billing)</option>
                         <option value="3">3 Months</option>
                         <option value="6">6 Months</option>
@@ -694,19 +539,20 @@
                         <option value="24">24 Months</option>
                     </select>
                 </div>
-                <div><label class="block text-xs text-gray-500 mb-1">Start Date</label><input type="date" id="install-date" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-3 dark:text-white outline-none cursor-pointer focus:border-cyan-500"></div>
-                <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-xs">
+                <div><label class="block text-[10px] text-gray-500 mb-1">Start Date</label><input type="date" id="install-date" class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 dark:text-white outline-none cursor-pointer focus:border-cyan-500 text-xs"></div>
+                <div class="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-[10px]">
                     Monthly Payment: <span id="install-monthly-display" class="font-bold">₱0.00</span>
                 </div>
-                <button onclick="submitInstallmentPlan()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 rounded-xl">Create Plan</button>
+                <button onclick="submitInstallmentPlan()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2.5 rounded-xl text-xs">Create Plan</button>
             </div>
         </div>
     </div>
 
     <!-- LINK SHARED SCRIPT -->
     <script src="script.js"></script>
+    <script src="settings.js"></script>
     <script>
-        // Exposed Functions
+        // Exposed Functions for this page
         window.renderApp = renderApp;
         window.openAddAccountModal = openAddAccountModal;
         window.closeAddAccountModal = closeAddAccountModal;
@@ -781,13 +627,13 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // --- NEW: CREDIT & PAYABLES STATS (SIDEBAR) ---
+        // --- UPDATED: CREDIT STATS TO MATCH SAVINGS STYLE ---
         function renderCreditStats() {
             const container = document.getElementById('credit-stats-container');
             if(!container) return;
             container.innerHTML = '';
 
-            // 1. Calculate Credit Utilization
+            // 1. Calculate Stats
             const creditAccounts = state.accounts.filter(a => a.tag === 'credit');
             const totalDebt = creditAccounts.reduce((acc, curr) => acc + curr.balance, 0);
             const totalLimit = creditAccounts.reduce((acc, curr) => acc + (curr.creditLimit || 0), 0);
@@ -797,101 +643,39 @@
                 utilization = (totalDebt / totalLimit) * 100;
             }
 
-            // 2. Calculate Weekly & Monthly Due
             const now = new Date();
-            const oneWeek = new Date(); oneWeek.setDate(now.getDate() + 7);
             const oneMonth = new Date(); oneMonth.setMonth(now.getMonth() + 1);
-
-            let weeklyDue = 0;
             let monthlyDue = 0;
-            let overdue = 0;
 
             state.expenses.forEach(exp => {
                 const d = new Date(exp.id);
-                // Only count expenses linked to credit accounts OR generally categorized as bills
-                const isCreditRelated = exp.accountId && state.accounts.find(a => a.id == exp.accountId)?.tag === 'credit';
-                
-                // Just count all future expenses as payables for simplicity in "Payables"
-                if (d > now) {
-                    if (d <= oneWeek) weeklyDue += exp.amount;
-                    if (d <= oneMonth) monthlyDue += exp.amount;
-                } else {
-                    overdue += exp.amount;
-                }
+                if (d > now && d <= oneMonth) monthlyDue += exp.amount;
             });
 
-            // 3. Insight Logic
-            let insightTitle = "Good Payer";
-            let insightMsg = "Keep it up!";
-            let insightColor = "text-green-500";
-            let insightBg = "bg-green-100 dark:bg-green-900/20";
-            let icon = "thumbs-up";
-
-            if (overdue > 0) {
-                insightTitle = "Overdue Items";
-                insightMsg = "You have past due bills.";
-                insightColor = "text-red-500";
-                insightBg = "bg-red-100 dark:bg-red-900/20";
-                icon = "alert-circle";
-            } else if (utilization > 80) {
-                insightTitle = "High Usage";
-                insightMsg = "Credit usage is high.";
-                insightColor = "text-orange-500";
-                insightBg = "bg-orange-100 dark:bg-orange-900/20";
-                icon = "alert-triangle";
-            } else if (utilization === 0 && totalDebt === 0) {
-                 insightTitle = "Debt Free";
-                 insightMsg = "No outstanding balances.";
-                 icon = "check-circle";
-            }
-
-            // RENDER HTML
-            
-            // Card 1: Insight
-            container.insertAdjacentHTML('beforeend', `
-                <div class="p-3 rounded-xl border border-gray-200 dark:border-gray-800 ${insightBg} flex items-center gap-3">
-                    <div class="w-8 h-8 rounded-lg bg-white/50 dark:bg-black/20 flex items-center justify-center ${insightColor}">
-                        <i data-lucide="${icon}" class="w-4 h-4"></i>
+            // NEW: Unified Card Style (Matching Total Savings in Savings.html)
+            container.innerHTML = `
+                <div class="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-xl p-3 border border-red-100 dark:border-red-900/30 shadow-sm relative overflow-hidden mb-3">
+                    <label class="text-red-600 dark:text-red-400 text-[9px] font-bold uppercase tracking-wider mb-0.5 block flex items-center gap-1">
+                        <i data-lucide="credit-card" class="w-3 h-3"></i> Total Debt
+                    </label>
+                    <div class="flex flex-col mb-2">
+                        <span class="text-xl font-black text-gray-900 dark:text-white tracking-tight">₱${totalDebt.toLocaleString()}</span>
+                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-medium">${utilization.toFixed(1)}% Credit Used</span>
                     </div>
-                    <div>
-                        <h4 class="text-sm font-bold text-gray-900 dark:text-white">${insightTitle}</h4>
-                        <p class="text-[10px] text-gray-500 dark:text-gray-400">${insightMsg}</p>
+                    <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden mb-1">
+                        <div class="bg-gradient-to-r from-red-500 to-orange-600 h-1.5 rounded-full" style="width: ${utilization}%"></div>
+                    </div>
+                    <div class="flex justify-between items-center text-[9px] mt-1">
+                        <span class="text-gray-400">Total Limit</span>
+                        <span class="font-bold text-gray-600 dark:text-gray-300">₱${totalLimit.toLocaleString()}</span>
                     </div>
                 </div>
-            `);
-
-            // Card 2: Payables (Grid)
-            container.insertAdjacentHTML('beforeend', `
-                <div class="grid grid-cols-2 gap-2">
-                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
-                        <span class="text-[10px] text-gray-500 uppercase">Due This Week</span>
-                        <span class="block text-sm font-bold text-gray-900 dark:text-white mt-1">₱${weeklyDue.toLocaleString()}</span>
-                    </div>
-                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
-                        <span class="text-[10px] text-gray-500 uppercase">Due This Month</span>
-                        <span class="block text-sm font-bold text-cyan-600 dark:text-cyan-400 mt-1">₱${monthlyDue.toLocaleString()}</span>
-                    </div>
+                
+                <div class="p-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
+                    <span class="text-[8px] text-gray-500 uppercase">Est. Due This Month</span>
+                    <span class="block text-xs font-bold text-red-600 dark:text-red-400 mt-0.5">₱${monthlyDue.toLocaleString()}</span>
                 </div>
-            `);
-
-            // Card 3: Credit Stats
-            if (totalLimit > 0) {
-                 container.insertAdjacentHTML('beforeend', `
-                    <div class="p-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
-                        <div class="flex justify-between items-center mb-2">
-                             <span class="text-xs font-bold text-gray-500 uppercase">Credit Utilization</span>
-                             <span class="text-xs font-bold text-gray-900 dark:text-white">${utilization.toFixed(1)}%</span>
-                        </div>
-                        <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
-                            <div class="bg-gradient-to-r from-cyan-500 to-blue-600 h-2 rounded-full" style="width: ${utilization}%"></div>
-                        </div>
-                        <div class="flex justify-between mt-2 text-[9px] text-gray-400">
-                            <span>Debt: ₱${totalDebt.toLocaleString()}</span>
-                            <span>Limit: ₱${totalLimit.toLocaleString()}</span>
-                        </div>
-                    </div>
-                `);
-            }
+            `;
         }
 
         function renderAccountHistory(accountId) {
@@ -928,7 +712,7 @@
             });
 
             if(allTx.length === 0) {
-                container.innerHTML = '<div class="text-xs text-gray-400 text-center py-4">No transactions found</div>';
+                container.innerHTML = '<div class="text-[10px] text-gray-400 text-center py-2">No transactions found</div>';
                 return;
             }
 
@@ -962,10 +746,10 @@
                 container.insertAdjacentHTML('beforeend', `
                     <div class="flex justify-between items-center p-2 rounded-lg border border-gray-100 dark:border-gray-700/50 hover:bg-white dark:hover:bg-gray-700 transition-colors group">
                         <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-6 h-6 rounded-md ${bgClass} flex items-center justify-center shrink-0"><i data-lucide="${icon}" class="w-3 h-3"></i></div>
+                            <div class="w-5 h-5 rounded-md ${bgClass} flex items-center justify-center shrink-0"><i data-lucide="${icon}" class="w-3 h-3"></i></div>
                             <div class="overflow-hidden">
                                 <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate block">${tx.label}</span>
-                                <span class="text-[9px] text-gray-400 block">${dateStr}</span>
+                                <span class="text-[8px] text-gray-400 block">${dateStr}</span>
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
@@ -1030,7 +814,7 @@
                         }
                     }
                     
-                    saveData();
+                    saveData(); // Calls the robust sync saver
                     renderApp();
                     if(currentAccountId) openAccountDetails(currentAccountId); // Refresh modal if open
                 }
@@ -1055,7 +839,8 @@
         }
 
         function renderAccounts() {
-            const liquidList = document.getElementById('accounts-liquid-list');
+            const dailyList = document.getElementById('accounts-daily-list');
+            const savingsList = document.getElementById('accounts-savings-list');
             const creditList = document.getElementById('accounts-credit-list');
             
             const savingsBySource = {};
@@ -1063,155 +848,143 @@
                 if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
             });
 
+            // UPDATED: Compact Card Function matching Savings.html size/style
             const createCard = (acc, isCredit = false) => {
                 let provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
                 const savingsHere = savingsBySource[acc.id] || 0; 
                 
-                // Credit Card Specific Logic
                 if (isCredit) {
                     const limit = acc.creditLimit || 0;
-                    const debt = acc.balance; // Balance is treated as Debt
-                    
-                    // Exclude Interest from Limit Calculation
+                    const debt = acc.balance; 
                     const interestBal = acc.interestBalance || 0;
                     const principalDebt = Math.max(0, debt - interestBal);
                     const available = limit > 0 ? Math.max(0, limit - principalDebt) : 0;
                     
-                    // Logic for Installment / Current Bill / Upcoming
-                    // Installment: Sum of all FUTURE expenses for this account
                     const todayTime = Date.now();
                     const futureExpenses = state.expenses.filter(e => e.accountId === acc.id && e.id > todayTime);
                     const installmentTotal = futureExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-                    // Automatic Current Bill Calculation
-                    // Sum of expenses due this month (or due soon)
                     const now = new Date();
                     const currentMonthExpenses = state.expenses.filter(e => {
                         if (e.accountId !== acc.id) return false;
                         const d = new Date(e.id);
-                        // Simple Check: Same Month and Year
                         return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
                     });
                     const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
-                    
                     const upcomingBill = Math.max(0, debt - currentBill);
 
-                    // Use a Credit Card Look (Gradient)
                     const cardBg = "bg-gradient-to-br from-slate-900 to-black border-slate-800";
 
                     return `
-                    <div onclick="openAccountDetails('${acc.id}')" class="relative group overflow-hidden rounded-2xl ${cardBg} p-5 border border-gray-700 shadow-xl cursor-pointer transition-all hover:scale-[1.01] hover:shadow-2xl hover:border-gray-500">
-                        <div class="flex justify-between items-start mb-6">
-                            <div class="flex items-center gap-3">
-                                <div class="w-10 h-10 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg">
-                                    <i data-lucide="${provider.icon}" class="w-5 h-5"></i>
+                    <div onclick="openAccountDetails('${acc.id}')" class="relative group overflow-hidden rounded-2xl ${cardBg} p-3 border border-gray-700 shadow-sm cursor-pointer transition-all hover:scale-[1.01] hover:shadow-2xl hover:border-gray-500">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg">
+                                    <i data-lucide="${provider.icon}" class="w-4 h-4"></i>
                                 </div>
                                 <div>
-                                    <h3 class="font-bold text-white text-sm leading-tight">${acc.name}</h3>
-                                    <span class="text-[10px] text-gray-400 uppercase tracking-wider">${provider.name}</span>
+                                    <h3 class="font-bold text-white text-[10px] leading-tight">${acc.name}</h3>
+                                    <span class="text-[8px] text-gray-400 uppercase tracking-wider">${provider.name}</span>
                                 </div>
                             </div>
-                            <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold py-1.5 px-3 rounded-full backdrop-blur-sm border border-white/10 transition-colors flex items-center gap-1">
-                                Pay <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                            <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="bg-white/10 hover:bg-white/20 text-white text-[8px] font-bold py-1 px-2 rounded-full backdrop-blur-sm border border-white/10 transition-colors flex items-center gap-1">
+                                Pay <i data-lucide="arrow-right" class="w-2.5 h-2.5"></i>
                             </button>
                         </div>
 
-                        <div class="mb-6">
-                            <span class="block text-[10px] text-gray-400 uppercase tracking-widest mb-1">Total Outstanding</span>
-                            <span class="block text-3xl font-mono font-bold text-white tracking-tight">₱${debt.toLocaleString()}</span>
+                        <div class="mb-2">
+                            <span class="block text-[8px] text-gray-400 uppercase tracking-widest mb-0.5">Outstanding</span>
+                            <span class="block text-lg font-mono font-bold text-white tracking-tight leading-none">₱${debt.toLocaleString()}</span>
                         </div>
 
-                        <div class="grid grid-cols-3 gap-2 text-center w-full">
+                        <div class="grid grid-cols-3 gap-1 text-center w-full mb-2">
                             <div class="overflow-hidden">
-                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Installment</span>
-                                <span class="text-xs font-bold text-gray-300 truncate block" title="₱${installmentTotal.toLocaleString()}">₱${installmentTotal.toLocaleString()}</span>
+                                <span class="block text-[7px] text-gray-500 uppercase mb-0.5 truncate">Installment</span>
+                                <span class="text-[9px] font-bold text-gray-300 truncate block">₱${installmentTotal.toLocaleString()}</span>
                             </div>
                             <div class="border-x border-white/10 px-1 overflow-hidden">
-                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Current Bill</span>
-                                <span class="text-xs font-bold text-white truncate block" title="₱${currentBill.toLocaleString()}">₱${currentBill.toLocaleString()}</span>
+                                <span class="block text-[7px] text-gray-500 uppercase mb-0.5 truncate">Bill</span>
+                                <span class="text-[9px] font-bold text-white truncate block">₱${currentBill.toLocaleString()}</span>
                             </div>
                             <div class="overflow-hidden">
-                                <span class="block text-[9px] text-gray-500 uppercase mb-1 truncate">Upcoming</span>
-                                <span class="text-xs font-bold text-gray-300 truncate block" title="₱${upcomingBill.toLocaleString()}">₱${upcomingBill.toLocaleString()}</span>
+                                <span class="block text-[7px] text-gray-500 uppercase mb-0.5 truncate">Next</span>
+                                <span class="text-[9px] font-bold text-gray-300 truncate block">₱${upcomingBill.toLocaleString()}</span>
                             </div>
                         </div>
 
-                         <div class="mt-4 pt-4 border-t border-white/10">
-                             <div class="flex justify-between text-[9px] mb-1 text-gray-400">
-                                 <span>Limit: ₱${limit.toLocaleString()}</span>
-                                 <span>Avail: ₱${available.toLocaleString()}</span>
+                         <div class="pt-1.5 border-t border-white/10">
+                             <div class="flex justify-between text-[7px] mb-0.5 text-gray-400">
+                                 <span>L: ₱${limit.toLocaleString()}</span>
+                                 <span>A: ₱${available.toLocaleString()}</span>
                              </div>
                              <div class="h-1 w-full bg-gray-800 rounded-full overflow-hidden">
                                  <div class="h-full bg-cyan-600" style="width: ${limit > 0 ? (principalDebt/limit)*100 : 0}%"></div>
                              </div>
                          </div>
-                        
-                        <div class="absolute -bottom-10 -right-10 w-32 h-32 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
                     </div>`;
                 } 
                 
-                // Liquid Asset Logic (Enhanced Card)
+                // Liquid Asset Logic (Compact Rounded-2xl matching Savings)
                 else {
                     const total = acc.balance + savingsHere;
-                    
-                    // Logic: Interest Rate Badge
                     const hasInterest = provider.interest && provider.interest !== '0%';
                     const interestBadge = hasInterest 
-                        ? `<span class="text-[9px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full font-medium flex items-center gap-1 border border-green-200 dark:border-green-800"><i data-lucide="trending-up" class="w-3 h-3"></i> ${provider.interest}</span>` 
+                        ? `<span class="text-[7px] bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-1 py-0 rounded-full font-medium flex items-center gap-0.5 border border-green-200 dark:border-green-800"><i data-lucide="trending-up" class="w-2 h-2"></i> ${provider.interest}</span>` 
                         : '';
 
-                    // FIXED: Z-Index issues to ensure clickable area works for GoTyme or any Bank card
                     return `
-                        <div onclick="openAccountDetails('${acc.id}')" class="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-5 rounded-2xl relative overflow-hidden cursor-pointer hover:border-cyan-500 transition-all shadow-sm hover:shadow-md">
+                        <div onclick="openAccountDetails('${acc.id}')" class="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 rounded-2xl relative overflow-hidden cursor-pointer hover:border-cyan-500 transition-all shadow-sm hover:shadow-cyan-500/10">
                             
-                            <div class="flex justify-between items-start mb-4 relative z-10">
-                                <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-xl ${provider.color} flex items-center justify-center text-white shadow-md">
-                                        <i data-lucide="${provider.icon}" class="w-5 h-5"></i>
+                            <div class="flex justify-between items-start mb-2 relative z-10">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-8 h-8 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+                                        <i data-lucide="${provider.icon}" class="w-4 h-4"></i>
                                     </div>
                                     <div>
-                                        <h3 class="font-bold text-gray-900 dark:text-white text-sm">${acc.name}</h3>
-                                        <p class="text-[10px] text-gray-500">${provider.name}</p>
+                                        <h3 class="font-bold text-gray-900 dark:text-white text-[10px]">${acc.name}</h3>
+                                        <p class="text-[8px] text-gray-500">${provider.name}</p>
                                     </div>
                                 </div>
                                 ${interestBadge}
                             </div>
 
-                            <div class="mb-4 relative z-10">
-                                <span class="block text-[10px] text-gray-500 uppercase tracking-wider mb-1">Total Assets</span>
-                                <span class="block text-2xl font-bold text-gray-900 dark:text-white tracking-tight">₱${total.toLocaleString()}</span>
+                            <div class="mb-2 relative z-10">
+                                <span class="block text-[8px] text-gray-500 uppercase tracking-wider mb-0.5">Total Assets</span>
+                                <span class="block text-lg font-bold text-gray-900 dark:text-white tracking-tight leading-none">₱${total.toLocaleString()}</span>
                             </div>
 
-                            <div class="space-y-2 bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 border border-gray-100 dark:border-gray-800 relative z-10">
-                                <div class="flex justify-between items-center text-xs">
+                            <div class="space-y-1 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-1.5 border border-gray-100 dark:border-gray-800 relative z-10">
+                                <div class="flex justify-between items-center text-[9px]">
                                     <span class="text-gray-500">Available</span>
                                     <span class="font-bold text-gray-700 dark:text-gray-300">₱${acc.balance.toLocaleString()}</span>
                                 </div>
                                 ${savingsHere > 0 ? `
-                                <div class="flex justify-between items-center text-xs pt-1 border-t border-gray-200 dark:border-gray-700">
-                                    <span class="text-orange-500 flex items-center gap-1"><i data-lucide="lock" class="w-3 h-3"></i> Locked in Goals</span>
+                                <div class="flex justify-between items-center text-[9px] pt-0.5 border-t border-gray-200 dark:border-gray-700">
+                                    <span class="text-orange-500 flex items-center gap-0.5"><i data-lucide="lock" class="w-2.5 h-2.5"></i> Locked</span>
                                     <span class="font-bold text-orange-600 dark:text-orange-400">₱${savingsHere.toLocaleString()}</span>
                                 </div>` : ''}
                             </div>
 
-                            <div class="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="p-2 bg-gray-100 dark:bg-gray-700 hover:bg-cyan-100 dark:hover:bg-cyan-900/30 text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-lg transition-colors shadow-sm" title="Transfer">
-                                    <i data-lucide="arrow-right-left" class="w-4 h-4"></i>
+                            <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="p-1 bg-gray-100 dark:bg-gray-700 hover:bg-cyan-100 dark:hover:bg-cyan-900/30 text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-md transition-colors shadow-sm" title="Transfer">
+                                    <i data-lucide="arrow-right-left" class="w-3 h-3"></i>
                                 </button>
                             </div>
                             
-                            <div class="absolute -top-10 -right-10 w-32 h-32 bg-gray-50 dark:bg-gray-800/50 rounded-full blur-3xl pointer-events-none z-0"></div>
+                            <div class="absolute -top-10 -right-10 w-24 h-24 bg-gray-5 dark:bg-gray-800/50 rounded-full blur-2xl pointer-events-none z-0"></div>
                         </div>`;
                 }
             };
 
-            if (liquidList && creditList) {
+            if (dailyList && savingsList && creditList) {
                 // Filter by Tag
-                const banks = state.accounts.filter(a => a.tag !== 'credit');
+                const banks = state.accounts.filter(a => a.tag === 'daily' || (!a.tag && a.type !== 'credit')); // Default to daily if no tag
+                const savings = state.accounts.filter(a => a.tag === 'savings');
                 const credits = state.accounts.filter(a => a.tag === 'credit');
 
-                liquidList.innerHTML = banks.length ? banks.map(a => createCard(a, false)).join('') : '<div class="col-span-full text-center text-xs text-gray-400 py-4">No bank or cash accounts</div>';
-                creditList.innerHTML = credits.length ? credits.map(a => createCard(a, true)).join('') : '<div class="col-span-full text-center text-xs text-gray-400 py-4">No credit accounts</div>';
+                dailyList.innerHTML = banks.length ? banks.map(a => createCard(a, false)).join('') : '<div class="col-span-full text-center text-[10px] text-gray-400 py-4">No daily accounts</div>';
+                savingsList.innerHTML = savings.length ? savings.map(a => createCard(a, false)).join('') : '<div class="col-span-full text-center text-[10px] text-gray-400 py-4">No savings accounts</div>';
+                creditList.innerHTML = credits.length ? credits.map(a => createCard(a, true)).join('') : '<div class="col-span-full text-center text-[10px] text-gray-400 py-4">No credit accounts</div>';
             }
         }
 
@@ -1222,15 +995,14 @@
             installmentAccountId = accId;
             
             document.getElementById('install-amount').value = '';
-            document.getElementById('install-interest').value = ''; // Added interest field
+            document.getElementById('install-interest').value = ''; 
             document.getElementById('install-date').value = new Date().toISOString().split('T')[0];
             
-            // Default 1 month
             const termSelect = document.getElementById('install-terms');
             if(termSelect) termSelect.value = "1";
 
             document.getElementById('installment-modal').classList.remove('hidden');
-            calculateInstallment(); // Update display immediately
+            calculateInstallment(); 
         }
 
         function closeInstallmentModal() {
@@ -1259,13 +1031,11 @@
             
             const startDate = new Date(dateVal);
             const monthlyAmount = (amount + interest) / terms;
-            const monthlyInterest = interest / terms; // Distribute interest evenly
+            const monthlyInterest = interest / terms; 
             const accIndex = state.accounts.findIndex(a => a.id === installmentAccountId);
             const acc = state.accounts[accIndex];
             
-            // Increase total debt (Principal + Interest)
             acc.balance += (amount + interest);
-            // Track Interest Balance separately to exclude from Limit
             acc.interestBalance = (acc.interestBalance || 0) + interest;
 
             for(let i = 0; i < terms; i++) {
@@ -1277,7 +1047,7 @@
                 state.expenses.push({
                     id: dueDate.getTime(), 
                     amount: monthlyAmount,
-                    interestPortion: monthlyInterest, // Tag expense with interest portion for deletion
+                    interestPortion: monthlyInterest, 
                     note: noteLabel,
                     accountId: installmentAccountId,
                     category: 'bills',
@@ -1298,10 +1068,9 @@
             currentViewingAccountId = id;
 
             document.getElementById('details-account-name').innerText = acc.name;
-            document.getElementById('details-account-type').innerText = acc.tag.toUpperCase();
+            document.getElementById('details-account-type').innerText = acc.tag ? acc.tag.toUpperCase() : 'ACCOUNT';
             document.getElementById('details-account-balance').innerText = `₱${acc.balance.toLocaleString()}`;
             
-            // Link Edit button
             const editBtn = document.getElementById('btn-edit-from-details');
             editBtn.onclick = () => {
                 closeAccountDetailsModal();
@@ -1318,12 +1087,10 @@
                 balanceLabel.innerText = "Total Outstanding Balance";
                 balanceLabel.classList.add('text-red-500');
 
-                // CALCULATE STATS
                 const todayTime = Date.now();
                 const futureExpenses = state.expenses.filter(e => e.accountId === acc.id && e.id > todayTime);
                 const installmentTotal = futureExpenses.reduce((sum, e) => sum + e.amount, 0);
                 
-                // Automatic Current Bill: Expenses due in current Month
                 const now = new Date();
                 const currentMonthExpenses = state.expenses.filter(e => {
                         if (e.accountId !== acc.id) return false;
@@ -1366,7 +1133,6 @@
             document.getElementById('new-account-due').value = '';
             document.getElementById('account-provider-search').value = '';
             
-            // Default Tag
             const radios = document.getElementsByName('account-tag');
             if(radios[0]) radios[0].checked = true;
             
@@ -1394,7 +1160,6 @@
             document.getElementById('new-account-name').value = acc.name;
             document.getElementById('new-account-balance').value = acc.balance;
             
-            // Set Tag
             const radios = document.getElementsByName('account-tag');
             radios.forEach(r => {
                 if(r.value === acc.tag) r.checked = true;
@@ -1422,6 +1187,7 @@
             el.classList.remove('hidden');
         }
 
+        // UPDATED: Compact 2-Column Grid for Providers (Icon + Name Only)
         function renderAccountProviderGrid() {
             const container = document.getElementById('account-provider-grid');
             if (!container) return;
@@ -1430,7 +1196,12 @@
             
             PROVIDERS.filter(p => p.name.toLowerCase().includes(search)).forEach(p => {
                 const isSel = selectedAccountProviderId === p.id;
-                container.insertAdjacentHTML('beforeend', `<div onclick="selectedAccountProviderId='${p.id}'; renderAccountProviderGrid();" class="cursor-pointer flex flex-col items-center p-2 rounded-xl border transition-all ${isSel ? 'ring-2 ring-cyan-500 bg-gray-50 dark:bg-gray-800' : 'border-gray-200 dark:border-gray-700'}"><div class="w-8 h-8 rounded-lg ${p.color} flex items-center justify-center text-white mb-1"><i data-lucide="${p.icon}" class="w-4 h-4"></i></div><span class="text-[10px] text-gray-700 dark:text-gray-300 text-center">${p.name}</span></div>`);
+                container.insertAdjacentHTML('beforeend', `
+                    <div onclick="selectedAccountProviderId='${p.id}'; renderAccountProviderGrid();" class="cursor-pointer flex items-center gap-2 p-2 rounded-lg border transition-all ${isSel ? 'ring-1 ring-cyan-500 bg-cyan-50 dark:bg-cyan-900/20 border-cyan-500' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'}">
+                        <div class="w-6 h-6 rounded-md ${p.color} flex items-center justify-center text-white shrink-0 shadow-sm"><i data-lucide="${p.icon}" class="w-3.5 h-3.5"></i></div>
+                        <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate">${p.name}</span>
+                    </div>
+                `);
             });
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
@@ -1448,7 +1219,6 @@
 
             if(!name || !selectedAccountProviderId) return showCustomAlert("Error", "Details required");
             
-            // Map tag to type for broader logic
             const provider = PROVIDERS.find(p => p.id === selectedAccountProviderId);
             
             const data = { 
@@ -1465,7 +1235,6 @@
 
             if (editingId) {
                 const idx = state.accounts.findIndex(x => x.id === editingId);
-                // Preserve additional fields
                 if (idx !== -1) {
                         data.interestBalance = state.accounts[idx].interestBalance || 0;
                         state.accounts[idx] = data;
@@ -1473,7 +1242,7 @@
             } else state.accounts.push(data);
             
             closeAddAccountModal();
-            saveData();
+            saveData(); 
             renderApp();
         }
 
@@ -1498,7 +1267,6 @@
             if(!dropdown) return;
             const isHidden = dropdown.classList.contains('hidden');
             
-            // Close others
             document.querySelectorAll('.custom-dropdown-menu').forEach(d => d.classList.add('hidden'));
             
             if(isHidden) {
@@ -1517,22 +1285,21 @@
             state.accounts.forEach(acc => {
                 const provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
                 
-                // UPDATED: Added my-1 (margin-y) to separate items visually
                 container.insertAdjacentHTML('beforeend', `
-                    <div onclick="selectOption('${targetId}', '${acc.id}')" class="custom-option group flex items-center justify-between my-1 flex items-center justify-between p-3 mb-2 last:mb-0 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-transparent hover:border-cyan-500 hover:bg-white dark:hover:bg-gray-800 cursor-pointer transition-all shadow-sm">
-                        <div class="flex items-center gap-3 overflow-hidden">
-                            <div class="w-6 h-6 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
+                    <div onclick="selectOption('${targetId}', '${acc.id}')" class="custom-option group flex items-center justify-between my-1 flex items-center justify-between p-2 mb-1.5 last:mb-0 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-transparent hover:border-cyan-500 hover:bg-white dark:hover:bg-gray-800 cursor-pointer transition-all shadow-sm">
+                        <div class="flex items-center gap-2 overflow-hidden">
+                            <div class="w-5 h-5 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
                                 <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
                             </div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200 truncate group-hover:text-cyan-600 dark:group-hover:text-cyan-400">${acc.name}</span>
+                            <span class="text-xs font-medium text-gray-700 dark:text-gray-200 truncate group-hover:text-cyan-600 dark:group-hover:text-cyan-400">${acc.name}</span>
                         </div>
-                        <span class="text-xs font-mono text-gray-500 whitespace-nowrap">₱${acc.balance.toLocaleString()}</span>
+                        <span class="text-[10px] font-mono text-gray-500 whitespace-nowrap">₱${acc.balance.toLocaleString()}</span>
                     </div>
                 `);
             });
             
             if(state.accounts.length === 0) {
-                    container.innerHTML = '<div class="p-4 text-center text-xs text-gray-400">No accounts found.</div>';
+                    container.innerHTML = '<div class="p-4 text-center text-[10px] text-gray-400">No accounts found.</div>';
             }
             
             if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -1543,25 +1310,21 @@
             if(!acc) return;
             const provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
 
-            // Update Hidden Value
             document.getElementById(`${targetId}-value`).value = accId;
 
-            // UPDATED: Simple One-Line Button Layout to match options
             const btn = document.getElementById(`${targetId}-btn`);
             btn.innerHTML = `
-                <div class="flex items-center gap-3 w-full overflow-hidden">
-                    <div class="w-6 h-6 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
+                <div class="flex items-center gap-2 w-full overflow-hidden">
+                    <div class="w-5 h-5 rounded-md ${provider.color} flex items-center justify-center text-white shrink-0">
                         <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
                     </div>
-                    <span class="block text-sm font-bold text-gray-900 dark:text-white truncate flex-1 text-left">${acc.name}</span>
-                    <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400 shrink-0 ml-auto"></i>
+                    <span class="block text-xs font-bold text-gray-900 dark:text-white truncate flex-1 text-left">${acc.name}</span>
+                    <i data-lucide="chevron-down" class="w-3 h-3 text-gray-400 shrink-0 ml-auto"></i>
                 </div>
             `;
             
-            // Close Dropdown
             document.getElementById(`${targetId}-dropdown`).classList.add('hidden');
             
-            // Check Smart Pay Logic if target is "To"
             if (targetId === 'transfer-to') {
                 checkSmartPayLogic(accId);
             }
@@ -1569,14 +1332,12 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // Logic to show "Pay Full Balance" if transferring to a Credit Account
         function checkSmartPayLogic(toAccountId) {
             const acc = state.accounts.find(a => a.id === toAccountId);
             const smartPayContainer = document.getElementById('transfer-smart-pay');
             const amountInput = document.getElementById('transfer-amount');
             
             if (acc && acc.tag === 'credit') {
-                // Determine Current Bill (Due this month)
                 const now = new Date();
                 const currentMonthExpenses = state.expenses.filter(e => {
                         if (e.accountId !== acc.id) return false;
@@ -1585,14 +1346,11 @@
                 });
                 const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
                 
-                // Show Container
                 smartPayContainer.classList.remove('hidden');
                 
-                // Pre-fill Amount with Current Bill (or Balance if 0 bill)
                 const suggestAmount = currentBill > 0 ? currentBill : acc.balance;
                 amountInput.value = suggestAmount;
 
-                // Setup Pay Full Button
                 const btnPayFull = document.getElementById('btn-pay-full');
                 document.getElementById('val-pay-full').innerText = `(₱${acc.balance.toLocaleString()})`;
                 
@@ -1606,14 +1364,12 @@
             }
         }
 
-        // Modified openTransferModal to support custom logic
         function openTransferModal(targetId = null) {
             if (state.accounts.length < 2) return showCustomAlert("Error", "Need 2 accounts to transfer");
             
             const el = document.getElementById('transfer-modal');
             if(!el) return;
             
-            // Reset fields
             document.getElementById('transfer-from-value').value = '';
             document.getElementById('transfer-to-value').value = '';
             document.getElementById('transfer-amount').value = '';
@@ -1621,17 +1377,15 @@
             
             const defaultContent = `
                 <div class="flex items-center justify-between w-full">
-                    <span class="text-gray-400 text-sm">Select Account</span>
-                    <i data-lucide="chevron-down" class="w-4 h-4 text-gray-400"></i>
+                    <span class="text-gray-400 text-xs">Select Account</span>
+                    <i data-lucide="chevron-down" class="w-3 h-3 text-gray-400"></i>
                 </div>`;
                 
             document.getElementById('transfer-from-btn').innerHTML = defaultContent;
             document.getElementById('transfer-to-btn').innerHTML = defaultContent;
 
-            // Pre-select if targetId provided
             if (targetId) {
                 selectOption('transfer-to', targetId);
-                // Try to find a logical source
                 const likelySource = state.accounts.find(a => a.tag !== 'credit' && a.id !== targetId);
                 if (likelySource) selectOption('transfer-from', likelySource.id);
             }

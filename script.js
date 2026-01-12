@@ -1,8 +1,6 @@
-/* --- DATA & STATE --- */
 const APP_KEY = 'moneyFlowStateV3';
 
 const PROVIDERS = [
-    // Cash & Banks
     { id: 'cash', name: 'Cash', type: 'bank', color: 'bg-green-600 dark:bg-green-700', icon: 'banknote', label: 'Cash', interest: '0%', interestFreq: '' },
     { id: 'maribank', name: 'MariBank', type: 'bank', color: 'bg-orange-500 dark:bg-orange-600', icon: 'landmark', label: 'MB', interest: '3.5% p.a.', interestFreq: 'Daily' },
     { id: 'seabk', name: 'SeaBank', type: 'bank', color: 'bg-orange-400 dark:bg-orange-500', icon: 'waves', label: 'SB', interest: '4.5% p.a.', interestFreq: 'Daily' },
@@ -17,7 +15,6 @@ const PROVIDERS = [
     { id: 'metro', name: 'Metrobank', type: 'bank', color: 'bg-blue-800 dark:bg-blue-900', icon: 'building-2', label: 'MB', interest: '0.0625%', interestFreq: 'Quarterly' },
     { id: 'landbank', name: 'Landbank', type: 'bank', color: 'bg-green-600 dark:bg-green-700', icon: 'sprout', label: 'LB', interest: '0.0625%', interestFreq: 'Quarterly' },
     
-    // Credit / PayLater
     { id: 'spaylater', name: 'SPayLater', type: 'credit', color: 'bg-orange-600 dark:bg-orange-700', icon: 'shopping-bag', label: 'SP' },
     { id: 'lazpaylater', name: 'LazPayLater', type: 'credit', color: 'bg-blue-400 dark:bg-blue-500', icon: 'wallet', label: 'Laz' },
     { id: 'tiktok', name: 'TiktokPayLater', type: 'credit', color: 'bg-black dark:bg-gray-800', icon: 'music-2', label: 'TK' },
@@ -26,7 +23,6 @@ const PROVIDERS = [
     { id: 'gloan', name: 'GLoan', type: 'credit', color: 'bg-blue-700 dark:bg-blue-800', icon: 'banknote', label: 'GL' },
     { id: 'cc', name: 'Credit Card', type: 'credit', color: 'bg-slate-700 dark:bg-slate-800', icon: 'credit-card', label: 'CC' },
 
-    // Icons
     { id: 'food', name: 'Food', type: 'generic', color: 'bg-yellow-500 dark:bg-yellow-600', icon: 'utensils', label: '' },
     { id: 'transpo', name: 'Transpo', type: 'generic', color: 'bg-gray-500 dark:bg-gray-600', icon: 'bus', label: '' },
     { id: 'home', name: 'Housing', type: 'generic', color: 'bg-teal-500 dark:bg-teal-600', icon: 'home', label: '' },
@@ -51,7 +47,7 @@ const DEFAULT_CATEGORIES = {
     transpo: { label: 'Transport', color: 'text-gray-600 dark:text-gray-400', bg: 'bg-gray-100 dark:bg-gray-500/10' },
 };
 
-let state = {
+window.state = window.state || {
     income: 0,
     recurring: { enabled: true, amount: 0, frequency: 'weekly', day: 1, date: 1 },
     settings: { dashboardView: 'weekly' }, 
@@ -66,7 +62,6 @@ let state = {
     lastInterestDate: null 
 };
 
-// --- GLOBAL EXPORTS ---
 window.toggleTheme = toggleTheme;
 window.saveSettings = saveSettings;
 window.toggleSettings = toggleSettings;
@@ -77,7 +72,6 @@ window.renderAccountsSidebar = renderAccountsSidebar;
 window.showCustomAlert = showCustomAlert; 
 window.showConfirmModal = showConfirmModal;
 
-/* --- CUSTOM MODAL ALERT SYSTEM (REDESIGNED) --- */
 function showCustomAlert(title, message) {
     let modal = document.getElementById('global-alert-modal');
     if (modal) modal.remove();
@@ -86,7 +80,6 @@ function showCustomAlert(title, message) {
     modal.id = 'global-alert-modal';
     modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4 animate-fade-in';
     
-    // Modern Alert Design
     modal.innerHTML = `
         <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl transform scale-100 transition-all flex flex-col items-center text-center">
             <div class="w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full flex items-center justify-center mb-5 shadow-lg shadow-cyan-500/20 text-white">
@@ -101,7 +94,6 @@ function showCustomAlert(title, message) {
     `;
     document.body.appendChild(modal);
     
-    // Initialize icons
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -113,7 +105,6 @@ function showConfirmModal(title, message, onConfirm) {
     modal.id = 'global-confirm-modal';
     modal.className = 'fixed inset-0 bg-black/60 backdrop-blur-sm z-[250] flex items-center justify-center p-4 animate-fade-in';
     
-    // Modern Confirm Design (Destructive/Warning Theme)
     modal.innerHTML = `
         <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl transform scale-100 transition-all flex flex-col items-center text-center">
             <div class="w-16 h-16 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center mb-5 text-red-600 dark:text-red-400">
@@ -138,7 +129,6 @@ function showConfirmModal(title, message, onConfirm) {
     };
 }
 
-/* --- THEME LOGIC --- */
 function initTheme() {
     const isDark = localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
     applyTheme(isDark);
@@ -169,17 +159,16 @@ function updateFavicon(isDark) {
     if (favicon) { favicon.href = 'images/fundflow-logo.png'; }
 }
 
-/* --- SETTINGS LOGIC --- */
 function toggleSettings(show) { 
     const m = document.getElementById('settings-modal'); 
     if(m) {
         m.classList.toggle('hidden', !show); 
         if(show) {
-            if (document.getElementById('setting-amount')) document.getElementById('setting-amount').value = state.recurring.amount;
-            if (document.getElementById('setting-frequency')) document.getElementById('setting-frequency').value = state.recurring.frequency || 'weekly';
-            if (document.getElementById('setting-day')) document.getElementById('setting-day').value = state.recurring.day;
-            if (document.getElementById('setting-date')) document.getElementById('setting-date').value = state.recurring.date || 1;
-            if (document.getElementById('setting-dashboard-view')) document.getElementById('setting-dashboard-view').value = state.settings.dashboardView || 'weekly';
+            if (document.getElementById('setting-amount')) document.getElementById('setting-amount').value = window.state.recurring.amount;
+            if (document.getElementById('setting-frequency')) document.getElementById('setting-frequency').value = window.state.recurring.frequency || 'weekly';
+            if (document.getElementById('setting-day')) document.getElementById('setting-day').value = window.state.recurring.day;
+            if (document.getElementById('setting-date')) document.getElementById('setting-date').value = window.state.recurring.date || 1;
+            if (document.getElementById('setting-dashboard-view')) document.getElementById('setting-dashboard-view').value = window.state.settings.dashboardView || 'weekly';
             updateSettingsUI();
         }
     }
@@ -192,12 +181,12 @@ function updateSettingsUI() {
 }
 
 function saveSettings() {
-    state.recurring.amount = Number(document.getElementById('setting-amount').value);
-    state.recurring.frequency = document.getElementById('setting-frequency').value;
-    state.recurring.day = Number(document.getElementById('setting-day').value);
-    state.recurring.date = Number(document.getElementById('setting-date').value);
+    window.state.recurring.amount = Number(document.getElementById('setting-amount').value);
+    window.state.recurring.frequency = document.getElementById('setting-frequency').value;
+    window.state.recurring.day = Number(document.getElementById('setting-day').value);
+    window.state.recurring.date = Number(document.getElementById('setting-date').value);
     if(document.getElementById('setting-dashboard-view')) {
-        state.settings.dashboardView = document.getElementById('setting-dashboard-view').value;
+        window.state.settings.dashboardView = document.getElementById('setting-dashboard-view').value;
     }
     
     saveData();
@@ -208,43 +197,40 @@ function saveSettings() {
     }
 }
 
-/* --- STORAGE LOGIC --- */
 function loadState() { 
     const s = localStorage.getItem(APP_KEY); 
     if(s) { 
         try { 
             const loaded = JSON.parse(s);
-            state = { ...state, ...loaded };
-            if(!state.accounts) state.accounts = [];
-            if(!state.allocations) state.allocations = [];
-            if(!state.savings) state.savings = [];
-            if(!state.savingsHistory) state.savingsHistory = [];
-            if(!state.expenses) state.expenses = [];
-            if(!state.transfers) state.transfers = [];
-            if(!state.categories) state.categories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
-            if(!state.settings) state.settings = { dashboardView: 'weekly' };
+            window.state = { ...window.state, ...loaded };
+            if(!window.state.accounts) window.state.accounts = [];
+            if(!window.state.allocations) window.state.allocations = [];
+            if(!window.state.savings) window.state.savings = [];
+            if(!window.state.savingsHistory) window.state.savingsHistory = [];
+            if(!window.state.expenses) window.state.expenses = [];
+            if(!window.state.transfers) window.state.transfers = [];
+            if(!window.state.categories) window.state.categories = JSON.parse(JSON.stringify(DEFAULT_CATEGORIES));
+            if(!window.state.settings) window.state.settings = { dashboardView: 'weekly' };
         } catch(e) { console.error("Corrupt state", e); } 
     } 
 }
 
 function saveData() { 
-    localStorage.setItem(APP_KEY, JSON.stringify(state)); 
+    localStorage.setItem(APP_KEY, JSON.stringify(window.state)); 
 }
 
-/* --- SHARED RENDERERS --- */
 function renderAccountsSidebar() {
     const sidebarList = document.getElementById('accounts-list');
     if(!sidebarList) return;
     
     const savingsBySource = {};
-    state.savings.forEach(goal => {
+    window.state.savings.forEach(goal => {
         if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
     });
 
-    sidebarList.innerHTML = state.accounts.map(acc => {
+    sidebarList.innerHTML = window.state.accounts.map(acc => {
         let provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
         const isCredit = acc.type === 'credit' || acc.tag === 'credit';
-        // Use acc.id instead of acc.providerId to match goal.source
         const savingsHere = savingsBySource[acc.id] || 0;
         const total = acc.balance + savingsHere;
         
@@ -276,10 +262,10 @@ function updateTotals() {
     if(elAssets) {
         let liquid = 0;
         const savingsBySource = {};
-        state.savings.forEach(goal => {
+        window.state.savings.forEach(goal => {
             if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
         });
-        state.accounts.forEach(acc => {
+        window.state.accounts.forEach(acc => {
             if (acc.tag !== 'credit' && acc.type !== 'credit') {
                 liquid += acc.balance + (savingsBySource[acc.id] || 0);
             }
