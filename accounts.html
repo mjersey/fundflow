@@ -24,6 +24,9 @@
             background-repeat: no-repeat;
             background-size: 1.2em 1.2em;
         }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #E5E7EB; border-radius: 10px; }
+        .dark .custom-scroll::-webkit-scrollbar-thumb { background: #374151; }
     </style>
 
     <!-- IMMEDIATE THEME INIT (PREVENTS FLASH) -->
@@ -204,7 +207,6 @@
                 <div class="flex justify-between items-center mb-2">
                     <h3 class="text-cyan-600 dark:text-cyan-400 text-[9px] font-bold flex items-center gap-1.5"><i data-lucide="activity" class="w-3 h-3"></i> Credit & Payables</h3>
                 </div>
-                <!-- Container for Credit Stats (Now a single card style) -->
                 <div id="credit-stats-container" class="space-y-2"></div>
             </div>
         </aside>
@@ -253,76 +255,78 @@
             </div>
 
             <!-- NAVBAR -->
-            <div class="fixed bottom-14 left-0 right-0 md:left-56 lg:left-64 flex justify-center z-50 pointer-events-none">
+            <div class="fixed bottom-14 left-0 right-0 md:left-64 lg:left-72 flex justify-center z-50 pointer-events-none">
                 <nav class="bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border border-gray-200 dark:border-gray-800 shadow-2xl rounded-full px-4 py-2 flex items-center gap-1 pointer-events-auto transition-all hover:scale-105">
-                    <a href="dashboard.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="layout-dashboard" class="w-3 h-3 mb-0.5"></i>
-                        <span class="text-[7px] font-medium">Home</span>
+                    <a href="dashboard.html" class="flex flex-col items-center justify-center w-12 h-10 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 mb-0.5"></i>
+                        <span class="text-[8px] font-medium">Home</span>
                     </a>
-                    <a href="budget.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="pie-chart" class="w-3 h-3 mb-0.5"></i>
-                        <span class="text-[7px] font-medium">Budget</span>
+                    <a href="budget.html" class="flex flex-col items-center justify-center w-12 h-10 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="pie-chart" class="w-3.5 h-3.5 mb-0.5"></i>
+                        <span class="text-[8px] font-medium">Budget</span>
                     </a>
-                    <a href="savings.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
-                        <i data-lucide="piggy-bank" class="w-3 h-3 mb-0.5"></i>
-                        <span class="text-[7px] font-bold">Save</span>
+                    <a href="savings.html" class="flex flex-col items-center justify-center w-12 h-10 rounded-xl text-gray-400 hover:text-cyan-600 hover:bg-gray-50 dark:hover:bg-gray-800 transition-all">
+                        <i data-lucide="piggy-bank" class="w-3.5 h-3.5 mb-0.5"></i>
+                        <span class="text-[8px] font-bold">Save</span>
                     </a>
-                    <a href="accounts.html" class="flex flex-col items-center justify-center w-10 h-9 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400 transition-all">
-                        <i data-lucide="wallet" class="w-3 h-3 mb-0.5"></i>
-                        <span class="text-[7px] font-medium">Wallet</span>
+                    <a href="accounts.html" class="flex flex-col items-center justify-center w-12 h-10 rounded-xl bg-cyan-50 dark:bg-cyan-900/20 text-cyan-600 dark:text-cyan-400 transition-all">
+                        <i data-lucide="wallet" class="w-3.5 h-3.5 mb-0.5"></i>
+                        <span class="text-[8px] font-medium">Wallet</span>
                     </a>
                 </nav>
             </div>
         </main>
     </div>
     
-    <!-- ACCOUNT DETAILS MODAL (Compact) -->
+    <!-- ACCOUNT DETAILS MODAL (Redesigned) -->
     <div id="account-details-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 hidden">
-        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-md rounded-2xl p-5 shadow-2xl animate-fade-in flex flex-col max-h-[85vh]">
-            <div class="flex justify-between items-center mb-3 pb-3 border-b border-gray-100 dark:border-gray-800">
-                <div>
-                    <h3 id="details-account-name" class="font-bold text-base text-gray-900 dark:text-white">Account Details</h3>
-                    <p id="details-account-type" class="text-[10px] text-gray-500">Savings Account</p>
-                </div>
-                <div class="flex gap-2">
-                    <button id="btn-edit-from-details" class="p-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-600 dark:text-gray-300 transition-colors">
-                        <i data-lucide="edit-2" class="w-3.5 h-3.5"></i>
-                    </button>
-                    <button onclick="closeAccountDetailsModal()" class="text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
-                        <i data-lucide="x" class="w-4 h-4"></i>
-                    </button>
-                </div>
-            </div>
+        <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-0 shadow-2xl animate-fade-in flex flex-col h-auto max-h-[85vh] overflow-hidden">
             
-            <div class="overflow-y-auto flex-1 pr-1 space-y-4">
-                <div class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-700">
-                    <span class="block text-[10px] text-gray-500 uppercase tracking-wider mb-0.5" id="details-balance-label">Current Balance</span>
-                    <span id="details-account-balance" class="block text-2xl font-bold text-gray-900 dark:text-white tracking-tight">₱0.00</span>
+            <!-- Hero Header -->
+            <div id="details-hero-bg" class="relative bg-gradient-to-br from-gray-800 to-gray-900 p-5 pb-6">
+                <div class="flex justify-between items-start mb-4">
+                    <div class="flex items-center gap-3">
+                        <div id="details-icon" class="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center text-white shadow-inner">
+                            <i data-lucide="wallet" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h2 id="details-account-name" class="text-lg font-black text-white leading-tight">Account Name</h2>
+                            <p id="details-account-provider" class="text-[10px] text-gray-400 font-medium">Provider</p>
+                        </div>
+                    </div>
+                    <button onclick="closeAccountDetailsModal()" class="text-white/70 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                
+                <div class="mb-1">
+                    <span class="text-[10px] text-white/60 uppercase tracking-wider block mb-0.5" id="details-balance-label">Available Balance</span>
+                    <span id="details-account-balance" class="text-2xl font-bold text-white tracking-tight">₱0.00</span>
                 </div>
 
-                <div id="details-credit-breakdown" class="hidden grid grid-cols-3 gap-2 text-center bg-gray-50 dark:bg-gray-800/50 rounded-xl p-2 border border-gray-200 dark:border-gray-800">
-                    <div>
-                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Installment</span>
-                        <span id="details-installment" class="text-xs font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
+                <!-- Credit Progress (Hidden by default) -->
+                <div id="details-credit-progress" class="hidden mt-3">
+                    <div class="flex justify-between text-white/70 text-[9px] mb-1">
+                        <span id="details-utilization-text">0% Used</span>
+                        <span id="details-limit-text">Limit: ₱0</span>
                     </div>
-                    <div class="border-x border-gray-200 dark:border-gray-700">
-                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Current Bill</span>
-                        <span id="details-current-bill" class="text-xs font-bold text-cyan-600 dark:text-cyan-400 truncate block">₱0</span>
+                    <div class="w-full bg-black/30 rounded-full h-1.5 overflow-hidden backdrop-blur-sm border border-white/5">
+                        <div id="details-progress-bar" class="bg-gradient-to-r from-red-500 to-orange-500 h-1.5 rounded-full transition-all duration-700" style="width: 0%"></div>
                     </div>
-                    <div>
-                        <span class="block text-[9px] text-gray-500 uppercase mb-0.5">Upcoming</span>
-                        <span id="details-upcoming" class="text-xs font-bold text-gray-700 dark:text-gray-300 truncate block">₱0</span>
-                    </div>
-                </div>
-
-                <div>
-                    <h4 class="text-[10px] font-bold text-gray-500 mb-2 flex items-center gap-1.5 uppercase tracking-wider"><i data-lucide="history" class="w-3 h-3"></i> Recent Transactions</h4>
-                    <div id="account-history-list" class="space-y-1.5"></div>
                 </div>
             </div>
 
-            <div id="details-credit-actions" class="hidden mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-                <button onclick="closeAccountDetailsModal(); openInstallmentModal(currentViewingAccountId)" class="w-full bg-gray-900 dark:bg-white text-white dark:text-black font-bold py-2.5 rounded-xl text-xs hover:opacity-90 transition-opacity">Add Installment / Loan</button>
+            <!-- Tabs/Header for List -->
+            <div class="flex border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 pt-3 pb-2">
+                <span class="text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5"><i data-lucide="history" class="w-3 h-3"></i> Recent Activity</span>
+            </div>
+
+            <!-- Content Area -->
+            <div class="flex-1 overflow-y-auto p-4 bg-gray-50 dark:bg-black/20 custom-scroll relative">
+                <div id="account-history-list" class="space-y-2"></div>
+            </div>
+
+            <!-- Footer Action -->
+            <div class="p-3 border-t border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 grid gap-2" id="details-footer-actions">
+                <!-- Dynamic buttons injected here -->
             </div>
         </div>
     </div>
@@ -435,10 +439,10 @@
                 </div>
 
                 <div>
-                    <label class="block text-[10px] text-gray-500 mb-1">Select Provider</label>
+                    <label class="block text-[10px] text-gray-500 mb-1">Provider</label>
                     <input type="text" id="account-provider-search" oninput="renderAccountProviderGrid()" placeholder="Search..." class="w-full mb-2 bg-gray-50 dark:bg-black border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-[10px] dark:text-white outline-none focus:border-cyan-500">
-                    <div class="h-32 overflow-y-auto border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/50 p-1.5 custom-scrollbar">
-                        <div id="account-provider-grid" class="grid grid-cols-2 gap-1.5"></div>
+                    <div class="h-24 overflow-y-auto border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-900/50 p-1.5 custom-scrollbar">
+                        <div id="account-provider-grid" class="grid grid-cols-3 gap-1.5"></div>
                     </div>
                 </div>
                 
@@ -552,7 +556,7 @@
     <script src="script.js"></script>
     <script src="settings.js"></script>
     <script>
-        // Exposed Functions for this page
+        // Exposed Functions
         window.renderApp = renderApp;
         window.openAddAccountModal = openAddAccountModal;
         window.closeAddAccountModal = closeAddAccountModal;
@@ -587,10 +591,8 @@
                 loadState(); 
                 initTheme();
                 
-                // Init Transfers if missing
                 if(!state.transfers) state.transfers = [];
 
-                // Toggle Credit Fields based on Tag
                 const radios = document.getElementsByName('account-tag');
                 radios.forEach(radio => {
                     radio.addEventListener('change', (e) => {
@@ -608,7 +610,6 @@
                     });
                 });
 
-                // Close dropdowns on click outside
                 document.addEventListener('click', (e) => {
                     if (!e.target.closest('.relative')) {
                         document.querySelectorAll('.custom-dropdown-menu').forEach(d => d.classList.add('hidden'));
@@ -627,55 +628,103 @@
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
-        // --- UPDATED: CREDIT STATS TO MATCH SAVINGS STYLE ---
+        // --- NEW: CREDIT & PAYABLES STATS (SIDEBAR) ---
         function renderCreditStats() {
             const container = document.getElementById('credit-stats-container');
             if(!container) return;
             container.innerHTML = '';
 
-            // 1. Calculate Stats
             const creditAccounts = state.accounts.filter(a => a.tag === 'credit');
             const totalDebt = creditAccounts.reduce((acc, curr) => acc + curr.balance, 0);
             const totalLimit = creditAccounts.reduce((acc, curr) => acc + (curr.creditLimit || 0), 0);
             
             let utilization = 0;
-            if (totalLimit > 0) {
-                utilization = (totalDebt / totalLimit) * 100;
-            }
+            if (totalLimit > 0) utilization = (totalDebt / totalLimit) * 100;
 
             const now = new Date();
+            const oneWeek = new Date(); oneWeek.setDate(now.getDate() + 7);
             const oneMonth = new Date(); oneMonth.setMonth(now.getMonth() + 1);
+
+            let weeklyDue = 0;
             let monthlyDue = 0;
+            let overdue = 0;
 
             state.expenses.forEach(exp => {
                 const d = new Date(exp.id);
-                if (d > now && d <= oneMonth) monthlyDue += exp.amount;
+                if (d > now) {
+                    if (d <= oneWeek) weeklyDue += exp.amount;
+                    if (d <= oneMonth) monthlyDue += exp.amount;
+                } else {
+                    overdue += exp.amount;
+                }
             });
 
-            // NEW: Unified Card Style (Matching Total Savings in Savings.html)
-            container.innerHTML = `
-                <div class="bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-xl p-3 border border-red-100 dark:border-red-900/30 shadow-sm relative overflow-hidden mb-3">
-                    <label class="text-red-600 dark:text-red-400 text-[9px] font-bold uppercase tracking-wider mb-0.5 block flex items-center gap-1">
-                        <i data-lucide="credit-card" class="w-3 h-3"></i> Total Debt
-                    </label>
-                    <div class="flex flex-col mb-2">
-                        <span class="text-xl font-black text-gray-900 dark:text-white tracking-tight">₱${totalDebt.toLocaleString()}</span>
-                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-medium">${utilization.toFixed(1)}% Credit Used</span>
+            let insightTitle = "Good Payer";
+            let insightMsg = "Keep it up!";
+            let insightColor = "text-green-500";
+            let insightBg = "bg-green-100 dark:bg-green-900/20";
+            let icon = "thumbs-up";
+
+            if (overdue > 0) {
+                insightTitle = "Overdue Items";
+                insightMsg = "You have past due bills.";
+                insightColor = "text-red-500";
+                insightBg = "bg-red-100 dark:bg-red-900/20";
+                icon = "alert-circle";
+            } else if (utilization > 80) {
+                insightTitle = "High Usage";
+                insightMsg = "Credit usage is high.";
+                insightColor = "text-orange-500";
+                insightBg = "bg-orange-100 dark:bg-orange-900/20";
+                icon = "alert-triangle";
+            } else if (utilization === 0 && totalDebt === 0) {
+                 insightTitle = "Debt Free";
+                 insightMsg = "No outstanding balances.";
+                 icon = "check-circle";
+            }
+
+            container.insertAdjacentHTML('beforeend', `
+                <div class="p-2 rounded-xl border border-gray-200 dark:border-gray-800 ${insightBg} flex items-center gap-2">
+                    <div class="w-6 h-6 rounded-lg bg-white/50 dark:bg-black/20 flex items-center justify-center ${insightColor}">
+                        <i data-lucide="${icon}" class="w-3 h-3"></i>
                     </div>
-                    <div class="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden mb-1">
-                        <div class="bg-gradient-to-r from-red-500 to-orange-600 h-1.5 rounded-full" style="width: ${utilization}%"></div>
-                    </div>
-                    <div class="flex justify-between items-center text-[9px] mt-1">
-                        <span class="text-gray-400">Total Limit</span>
-                        <span class="font-bold text-gray-600 dark:text-gray-300">₱${totalLimit.toLocaleString()}</span>
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-900 dark:text-white">${insightTitle}</h4>
+                        <p class="text-[9px] text-gray-500 dark:text-gray-400 leading-none">${insightMsg}</p>
                     </div>
                 </div>
-                
-                <div class="p-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
-                    <span class="text-[8px] text-gray-500 uppercase">Est. Due This Month</span>
-                    <span class="block text-xs font-bold text-red-600 dark:text-red-400 mt-0.5">₱${monthlyDue.toLocaleString()}</span>
+            `);
+
+            container.insertAdjacentHTML('beforeend', `
+                <div class="grid grid-cols-2 gap-1.5">
+                    <div class="p-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
+                        <span class="text-[8px] text-gray-500 uppercase">Due This Week</span>
+                        <span class="block text-xs font-bold text-gray-900 dark:text-white mt-0.5">₱${weeklyDue.toLocaleString()}</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-center">
+                        <span class="text-[8px] text-gray-500 uppercase">Due This Month</span>
+                        <span class="block text-xs font-bold text-cyan-600 dark:text-cyan-400 mt-0.5">₱${monthlyDue.toLocaleString()}</span>
+                    </div>
                 </div>
-            `;
+            `);
+
+            if (totalLimit > 0) {
+                 container.insertAdjacentHTML('beforeend', `
+                    <div class="p-2 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+                        <div class="flex justify-between items-center mb-1.5">
+                             <span class="text-[9px] font-bold text-gray-500 uppercase">Credit Utilization</span>
+                             <span class="text-[9px] font-bold text-gray-900 dark:text-white">${utilization.toFixed(1)}%</span>
+                        </div>
+                        <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
+                            <div class="bg-gradient-to-r from-cyan-500 to-blue-600 h-1.5 rounded-full" style="width: ${utilization}%"></div>
+                        </div>
+                        <div class="flex justify-between mt-1 text-[8px] text-gray-400">
+                            <span>Debt: ₱${totalDebt.toLocaleString()}</span>
+                            <span>Limit: ₱${totalLimit.toLocaleString()}</span>
+                        </div>
+                    </div>
+                `);
+            }
         }
 
         function renderAccountHistory(accountId) {
@@ -683,14 +732,12 @@
             if(!container) return;
             container.innerHTML = '';
 
-            // 1. Get Expenses
             const expenses = state.expenses.filter(e => e.accountId == accountId).map(e => ({
                 ...e,
                 type: 'expense',
                 label: e.note || 'Expense'
             }));
 
-            // 2. Get Transfers
             const transfers = (state.transfers || []).filter(t => t.from == accountId || t.to == accountId).map(t => {
                 const isOut = t.from == accountId;
                 const otherId = isOut ? t.to : t.from;
@@ -704,7 +751,6 @@
                 };
             });
 
-            // Merge & Sort
             const allTx = [...expenses, ...transfers].sort((a,b) => {
                 const dA = new Date(a.date || a.id).getTime();
                 const dB = new Date(b.date || b.id).getTime();
@@ -712,13 +758,13 @@
             });
 
             if(allTx.length === 0) {
-                container.innerHTML = '<div class="text-[10px] text-gray-400 text-center py-2">No transactions found</div>';
+                container.innerHTML = '<div class="text-[10px] text-gray-400 text-center py-4">No recent transactions.</div>';
                 return;
             }
 
             allTx.forEach(tx => {
                 const dateObj = new Date(tx.date || tx.id);
-                const dateStr = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                const dateStr = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
                 
                 let icon = 'receipt';
                 let colorClass = 'text-gray-900 dark:text-white';
@@ -738,17 +784,17 @@
                     bgClass = 'bg-blue-100 dark:bg-blue-900/20 text-blue-600';
                     deleteType = 'transfer';
                 } else {
-                    // Expense
                     colorClass = 'text-red-600 dark:text-red-400';
                     bgClass = 'bg-red-100 dark:bg-red-900/20 text-red-600';
                 }
 
+                // UPDATED: Transaction Item Style (Card-like) matching Savings History
                 container.insertAdjacentHTML('beforeend', `
-                    <div class="flex justify-between items-center p-2 rounded-lg border border-gray-100 dark:border-gray-700/50 hover:bg-white dark:hover:bg-gray-700 transition-colors group">
+                    <div class="flex justify-between items-center p-2 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl group">
                         <div class="flex items-center gap-2 overflow-hidden">
-                            <div class="w-5 h-5 rounded-md ${bgClass} flex items-center justify-center shrink-0"><i data-lucide="${icon}" class="w-3 h-3"></i></div>
+                            <div class="w-7 h-7 rounded-lg ${bgClass} flex items-center justify-center shrink-0"><i data-lucide="${icon}" class="w-3.5 h-3.5"></i></div>
                             <div class="overflow-hidden">
-                                <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate block">${tx.label}</span>
+                                <span class="text-[10px] font-bold text-gray-700 dark:text-gray-200 truncate block">${tx.label}</span>
                                 <span class="text-[8px] text-gray-400 block">${dateStr}</span>
                             </div>
                         </div>
@@ -774,17 +820,12 @@
                         if (expense) {
                             const acc = state.accounts.find(a => a.id == expense.accountId);
                             if (acc) {
-                                // Reverse balance change
                                 if (acc.tag === 'credit' || acc.type === 'credit') {
-                                    // Expense increased debt, so deleting it reduces debt (balance)
                                     acc.balance -= expense.amount;
-                                    
-                                    // Reverse Interest if it was part of this expense
                                     if (expense.interestPortion) {
                                         acc.interestBalance = Math.max(0, (acc.interestBalance || 0) - expense.interestPortion);
                                     }
                                 } else {
-                                    // Expense reduced funds, so deleting it refunds it
                                     acc.balance += expense.amount;
                                 }
                             }
@@ -795,28 +836,20 @@
                         if (transfer) {
                             const fromAcc = state.accounts.find(a => a.id == transfer.from);
                             const toAcc = state.accounts.find(a => a.id == transfer.to);
-                            
-                            // Revert From Account
                             if (fromAcc) {
                                 if (fromAcc.tag === 'credit') fromAcc.balance -= transfer.amount; 
                                 else fromAcc.balance += transfer.amount; 
                             }
-                            
-                            // Revert To Account
                             if (toAcc) {
-                                if (toAcc.tag === 'credit') {
-                                    toAcc.balance += transfer.amount;
-                                } else {
-                                    toAcc.balance -= transfer.amount;
-                                }
+                                if (toAcc.tag === 'credit') toAcc.balance += transfer.amount;
+                                else toAcc.balance -= transfer.amount;
                             }
                             state.transfers = state.transfers.filter(t => t.id != txId);
                         }
                     }
-                    
-                    saveData(); // Calls the robust sync saver
+                    saveData();
                     renderApp();
-                    if(currentAccountId) openAccountDetails(currentAccountId); // Refresh modal if open
+                    if(currentAccountId) openAccountDetails(currentAccountId); 
                 }
             );
         }
@@ -848,7 +881,7 @@
                 if (goal.includeInTotal) savingsBySource[goal.source] = (savingsBySource[goal.source] || 0) + Number(goal.current);
             });
 
-            // UPDATED: Compact Card Function matching Savings.html size/style
+            // Compact Card Function
             const createCard = (acc, isCredit = false) => {
                 let provider = PROVIDERS.find(p => p.id === acc.providerId) || { color: 'bg-gray-600', icon: 'wallet' };
                 const savingsHere = savingsBySource[acc.id] || 0; 
@@ -876,18 +909,18 @@
                     const cardBg = "bg-gradient-to-br from-slate-900 to-black border-slate-800";
 
                     return `
-                    <div onclick="openAccountDetails('${acc.id}')" class="relative group overflow-hidden rounded-2xl ${cardBg} p-3 border border-gray-700 shadow-sm cursor-pointer transition-all hover:scale-[1.01] hover:shadow-2xl hover:border-gray-500">
+                    <div onclick="openAccountDetails('${acc.id}')" class="relative group overflow-hidden rounded-xl ${cardBg} p-2.5 border border-gray-700 shadow-xl cursor-pointer transition-all hover:scale-[1.01] hover:shadow-2xl hover:border-gray-500">
                         <div class="flex justify-between items-start mb-2">
-                            <div class="flex items-center gap-2">
-                                <div class="w-8 h-8 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg">
-                                    <i data-lucide="${provider.icon}" class="w-4 h-4"></i>
+                            <div class="flex items-center gap-1.5">
+                                <div class="w-6 h-6 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg">
+                                    <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
                                 </div>
                                 <div>
                                     <h3 class="font-bold text-white text-[10px] leading-tight">${acc.name}</h3>
                                     <span class="text-[8px] text-gray-400 uppercase tracking-wider">${provider.name}</span>
                                 </div>
                             </div>
-                            <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="bg-white/10 hover:bg-white/20 text-white text-[8px] font-bold py-1 px-2 rounded-full backdrop-blur-sm border border-white/10 transition-colors flex items-center gap-1">
+                            <button onclick="event.stopPropagation(); openTransferModal('${acc.id}')" class="bg-white/10 hover:bg-white/20 text-white text-[8px] font-bold py-0.5 px-2 rounded-full backdrop-blur-sm border border-white/10 transition-colors flex items-center gap-1">
                                 Pay <i data-lucide="arrow-right" class="w-2.5 h-2.5"></i>
                             </button>
                         </div>
@@ -921,10 +954,11 @@
                                  <div class="h-full bg-cyan-600" style="width: ${limit > 0 ? (principalDebt/limit)*100 : 0}%"></div>
                              </div>
                          </div>
+                        
+                        <div class="absolute -bottom-10 -right-10 w-24 h-24 bg-white/5 rounded-full blur-xl pointer-events-none"></div>
                     </div>`;
                 } 
                 
-                // Liquid Asset Logic (Compact Rounded-2xl matching Savings)
                 else {
                     const total = acc.balance + savingsHere;
                     const hasInterest = provider.interest && provider.interest !== '0%';
@@ -933,12 +967,12 @@
                         : '';
 
                     return `
-                        <div onclick="openAccountDetails('${acc.id}')" class="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 rounded-2xl relative overflow-hidden cursor-pointer hover:border-cyan-500 transition-all shadow-sm hover:shadow-cyan-500/10">
+                        <div onclick="openAccountDetails('${acc.id}')" class="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-4 rounded-xl relative overflow-hidden cursor-pointer hover:border-cyan-500 transition-all shadow-sm hover:shadow-md">
                             
                             <div class="flex justify-between items-start mb-2 relative z-10">
-                                <div class="flex items-center gap-2">
-                                    <div class="w-8 h-8 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
-                                        <i data-lucide="${provider.icon}" class="w-4 h-4"></i>
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-6 h-6 rounded-lg ${provider.color} flex items-center justify-center text-white shadow-md">
+                                        <i data-lucide="${provider.icon}" class="w-3 h-3"></i>
                                     </div>
                                     <div>
                                         <h3 class="font-bold text-gray-900 dark:text-white text-[10px]">${acc.name}</h3>
@@ -971,14 +1005,13 @@
                                 </button>
                             </div>
                             
-                            <div class="absolute -top-10 -right-10 w-24 h-24 bg-gray-5 dark:bg-gray-800/50 rounded-full blur-2xl pointer-events-none z-0"></div>
+                            <div class="absolute -top-10 -right-10 w-24 h-24 bg-gray-50 dark:bg-gray-800/50 rounded-full blur-2xl pointer-events-none z-0"></div>
                         </div>`;
                 }
             };
 
             if (dailyList && savingsList && creditList) {
-                // Filter by Tag
-                const banks = state.accounts.filter(a => a.tag === 'daily' || (!a.tag && a.type !== 'credit')); // Default to daily if no tag
+                const banks = state.accounts.filter(a => a.tag === 'daily' || (!a.tag && a.type !== 'credit')); 
                 const savings = state.accounts.filter(a => a.tag === 'savings');
                 const credits = state.accounts.filter(a => a.tag === 'credit');
 
@@ -1068,52 +1101,60 @@
             currentViewingAccountId = id;
 
             document.getElementById('details-account-name').innerText = acc.name;
-            document.getElementById('details-account-type').innerText = acc.tag ? acc.tag.toUpperCase() : 'ACCOUNT';
+            const provider = PROVIDERS.find(p => p.id === acc.providerId) || { name: 'Unknown', color: 'bg-gray-500', icon: 'wallet' };
+            document.getElementById('details-account-provider').innerText = `${provider.name} • ${acc.tag ? acc.tag.toUpperCase() : 'ACCOUNT'}`;
             document.getElementById('details-account-balance').innerText = `₱${acc.balance.toLocaleString()}`;
             
-            const editBtn = document.getElementById('btn-edit-from-details');
-            editBtn.onclick = () => {
-                closeAccountDetailsModal();
-                openEditAccountModal(id);
-            };
+            // Icon
+            const iconContainer = document.getElementById('details-icon');
+            iconContainer.className = `w-10 h-10 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shadow-inner ${provider.color}`;
+            iconContainer.innerHTML = `<i data-lucide="${provider.icon}" class="w-5 h-5"></i>`;
 
-            const creditBreakdown = document.getElementById('details-credit-breakdown');
-            const creditActions = document.getElementById('details-credit-actions');
+            const footerActions = document.getElementById('details-footer-actions');
             const balanceLabel = document.getElementById('details-balance-label');
+            const creditProgress = document.getElementById('details-credit-progress');
+            const heroBg = document.getElementById('details-hero-bg');
+
+            // Default Footer Button
+            footerActions.innerHTML = `
+                <button onclick="closeAccountDetailsModal(); openEditAccountModal('${id}')" class="w-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-900 dark:text-white font-bold py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-2 transition-colors">
+                    <i data-lucide="edit-2" class="w-3 h-3"></i> Edit Account
+                </button>
+            `;
 
             if (acc.tag === 'credit') {
-                creditBreakdown.classList.remove('hidden');
-                creditActions.classList.remove('hidden');
+                heroBg.className = "relative bg-gradient-to-br from-red-900 to-orange-900 p-5 pb-6";
                 balanceLabel.innerText = "Total Outstanding Balance";
-                balanceLabel.classList.add('text-red-500');
-
-                const todayTime = Date.now();
-                const futureExpenses = state.expenses.filter(e => e.accountId === acc.id && e.id > todayTime);
-                const installmentTotal = futureExpenses.reduce((sum, e) => sum + e.amount, 0);
+                balanceLabel.className = "text-[10px] text-red-200 uppercase tracking-wider block mb-0.5";
                 
-                const now = new Date();
-                const currentMonthExpenses = state.expenses.filter(e => {
-                        if (e.accountId !== acc.id) return false;
-                        const d = new Date(e.id);
-                        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                });
-                const currentBill = currentMonthExpenses.reduce((sum, e) => sum + e.amount, 0);
+                creditProgress.classList.remove('hidden');
                 
-                const upcomingBill = Math.max(0, acc.balance - currentBill);
+                const limit = acc.creditLimit || 0;
+                const debt = acc.balance;
+                let utilization = 0;
+                if(limit > 0) utilization = (debt / limit) * 100;
+                
+                document.getElementById('details-utilization-text').innerText = `${utilization.toFixed(1)}% Used`;
+                document.getElementById('details-limit-text').innerText = `Limit: ₱${limit.toLocaleString()}`;
+                document.getElementById('details-progress-bar').style.width = `${Math.min(utilization, 100)}%`;
 
-                document.getElementById('details-installment').innerText = `₱${installmentTotal.toLocaleString()}`;
-                document.getElementById('details-current-bill').innerText = `₱${currentBill.toLocaleString()}`;
-                document.getElementById('details-upcoming').innerText = `₱${upcomingBill.toLocaleString()}`;
+                // Add Installment Button to Footer
+                footerActions.innerHTML += `
+                    <button onclick="closeAccountDetailsModal(); openInstallmentModal('${id}')" class="w-full bg-white/10 hover:bg-white/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900 font-bold py-2.5 rounded-xl text-[10px] flex items-center justify-center gap-2 transition-colors">
+                        <i data-lucide="plus-circle" class="w-3 h-3"></i> Add Installment / Loan
+                    </button>
+                `;
 
             } else {
-                creditBreakdown.classList.add('hidden');
-                creditActions.classList.add('hidden');
-                balanceLabel.innerText = "Current Balance";
-                balanceLabel.classList.remove('text-red-500');
+                heroBg.className = "relative bg-gradient-to-br from-gray-800 to-gray-900 p-5 pb-6"; // Default Dark
+                balanceLabel.innerText = "Available Balance";
+                balanceLabel.className = "text-[10px] text-white/60 uppercase tracking-wider block mb-0.5";
+                creditProgress.classList.add('hidden');
             }
 
             renderAccountHistory(id);
             document.getElementById('account-details-modal').classList.remove('hidden');
+            if (typeof lucide !== 'undefined') lucide.createIcons();
         }
 
         function closeAccountDetailsModal() {
@@ -1187,7 +1228,6 @@
             el.classList.remove('hidden');
         }
 
-        // UPDATED: Compact 2-Column Grid for Providers (Icon + Name Only)
         function renderAccountProviderGrid() {
             const container = document.getElementById('account-provider-grid');
             if (!container) return;
@@ -1196,12 +1236,7 @@
             
             PROVIDERS.filter(p => p.name.toLowerCase().includes(search)).forEach(p => {
                 const isSel = selectedAccountProviderId === p.id;
-                container.insertAdjacentHTML('beforeend', `
-                    <div onclick="selectedAccountProviderId='${p.id}'; renderAccountProviderGrid();" class="cursor-pointer flex items-center gap-2 p-2 rounded-lg border transition-all ${isSel ? 'ring-1 ring-cyan-500 bg-cyan-50 dark:bg-cyan-900/20 border-cyan-500' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'}">
-                        <div class="w-6 h-6 rounded-md ${p.color} flex items-center justify-center text-white shrink-0 shadow-sm"><i data-lucide="${p.icon}" class="w-3.5 h-3.5"></i></div>
-                        <span class="text-[10px] font-bold text-gray-700 dark:text-gray-300 truncate">${p.name}</span>
-                    </div>
-                `);
+                container.insertAdjacentHTML('beforeend', `<div onclick="selectedAccountProviderId='${p.id}'; renderAccountProviderGrid();" class="cursor-pointer flex flex-col items-center p-1.5 rounded-xl border transition-all ${isSel ? 'ring-2 ring-cyan-500 bg-cyan-50 dark:bg-cyan-900/20 border-cyan-500' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800'}"><div class="w-6 h-6 rounded-lg ${p.color} flex items-center justify-center text-white mb-0.5"><i data-lucide="${p.icon}" class="w-3 h-3"></i></div><span class="text-[8px] text-gray-700 dark:text-gray-300 text-center truncate w-full">${p.name}</span></div>`);
             });
             if (typeof lucide !== 'undefined') lucide.createIcons();
         }
