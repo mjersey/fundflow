@@ -53,11 +53,26 @@
         window.auth = auth;
         window.db = db;
         
+        // Initialize Empty State Globally to avoid crashes
+        window.state = {
+            accounts: [], expenses: [], savings: [], allocations: [], 
+            transfers: [], savingsHistory: [], income: 0,
+            recurring: { enabled: true, amount: 0, frequency: 'weekly', day: 1, date: 1 },
+            settings: { dashboardView: 'weekly' },
+            lastUpdated: Date.now()
+        };
+
         window.logout = () => { 
             if(window.showConfirmModal) {
-                window.showConfirmModal("Sign Out", "Are you sure you want to sign out?", () => signOut(auth).then(() => window.location.href = 'index.html'));
+                window.showConfirmModal("Sign Out", "Are you sure you want to sign out?", () => signOut(auth).then(() => {
+                    localStorage.removeItem('moneyFlowStateV3');
+                    window.location.href = 'index.html';
+                }));
             } else {
-                if(confirm("Sign Out?")) signOut(auth).then(() => window.location.href = 'index.html');
+                if(confirm("Sign Out?")) {
+                    localStorage.removeItem('moneyFlowStateV3');
+                    signOut(auth).then(() => window.location.href = 'index.html');
+                }
             }
         };
 
@@ -74,38 +89,71 @@
         window.saveProfileChanges = saveProfileChanges;
         window.handleDeleteAccount = handleDeleteAccount;
 
+        // ROBUST DATA SYNC (Matched with Dashboard.html)
         window.saveData = async () => {
+            if (!window.state) return;
             window.state.lastUpdated = Date.now();
+            
+            // Save locally
             localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+            
             const user = auth.currentUser;
             if (user) {
-                try { await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'), window.state); } 
-                catch (e) { console.error("Cloud Save Error:", e); }
+                try {
+                    await setDoc(doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState'), window.state);
+                } catch (e) { console.error("Cloud Save Error:", e); }
             }
         };
 
         onAuthStateChanged(auth, async (user) => {
-            if (!user) { window.location.href = 'index.html'; } else {
+            if (!user) {
+                window.location.href = 'index.html';
+            } else {
                 try {
+                    // Load local first for speed
+                    loadState(); 
+                    if(window.renderApp) window.renderApp();
+
                     const docRef = doc(db, 'artifacts', 'fundflow-default', 'users', user.uid, 'data', 'mainState');
                     const docSnap = await getDoc(docRef);
+                    
                     if (docSnap.exists()) {
+                        // EXISTING ACCOUNT: Check Timestamps to prevent overwrite
                         const cloudData = docSnap.data();
                         const localData = window.state || {};
+                        
+                        // Check if Cloud is newer than Local
                         if (cloudData.lastUpdated > (localData.lastUpdated || 0)) {
-                             window.state = { ...cloudData };
-                             localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+                            console.log("Sync: Cloud is newer. Updating local.");
+                            window.state = { ...window.state, ...cloudData };
+                            // Ensure transfers exists for older data
+                            if (!window.state.transfers) window.state.transfers = [];
+                            localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
+                            if(window.renderApp) window.renderApp();
                         } else {
-                            window.saveData();
+                            console.log("Sync: Local is newer or equal. Pushing to Cloud.");
+                            window.saveData(); // Push local changes to cloud
                         }
                     } else {
-                        if(!window.state) {
-                            window.state = { accounts: [], expenses: [], savings: [], allocations: [], transfers: [], savingsHistory: [], income: 0, lastUpdated: Date.now() };
+                        // NEW ACCOUNT / GUEST: Start Fresh (Clean Slate)
+                        console.log("Sync: New account detected. Initializing empty state.");
+                        
+                        if(!localStorage.getItem('moneyFlowStateV3')) {
+                             window.state = {
+                                accounts: [], expenses: [], savings: [], allocations: [], 
+                                transfers: [], savingsHistory: [], income: 0, 
+                                recurring: { enabled: true, amount: 0, frequency: 'weekly', day: 1, date: 1 },
+                                settings: { dashboardView: 'weekly' },
+                                lastUpdated: Date.now()
+                            };
                         }
-                        saveData(); 
+                        
+                        await setDoc(docRef, window.state);
+                        localStorage.setItem('moneyFlowStateV3', JSON.stringify(window.state));
                     }
-                    if(window.renderApp) window.renderApp();
-                } catch (e) { console.error("Sync Error:", e); }
+                } catch (e) {
+                    console.error("Sync Error:", e);
+                }
             }
         });
     </script>
@@ -220,6 +268,7 @@
         <div class="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 w-full max-w-sm rounded-2xl p-0 shadow-2xl animate-fade-in flex flex-col h-auto max-h-[85vh] overflow-hidden">
             
             <div id="details-hero-bg" class="relative p-5 pb-6">
+                <!-- Virtual Card Container (Hidden for Credit Accounts) -->
                 <div class="relative w-full aspect-[1.586/1] rounded-xl shadow-2xl overflow-hidden mb-4 transition-transform hover:scale-[1.02]" id="virtual-card-container">
                     <div class="absolute inset-0 bg-gradient-to-br from-gray-800 to-black z-0" id="virtual-card-bg"></div>
                     <div class="card-shine z-10"></div>
@@ -334,9 +383,9 @@
                 </div>
 
                 <div id="account-details-fields" class="grid grid-cols-2 gap-3 p-2 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <div class="col-span-2">
+                    <div class="col-span-2" id="account-number-container">
                         <label class="block text-[10px] text-gray-500 mb-1" id="acc-num-label">Account / Card Number</label>
-                        <input type="text" id="new-account-number" oninput="this.value = this.value.replace(/[^0-9]/g, '')" placeholder="Numbers only" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500 font-mono">
+                        <input type="text" id="new-account-number" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 16)" placeholder="10-16 digits" class="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2 text-xs dark:text-white outline-none focus:border-cyan-500 font-mono">
                     </div>
                     <div id="card-expiry-field">
                         <label class="block text-[10px] text-gray-500 mb-1">Expiry (MM/YY)</label>
@@ -501,6 +550,7 @@
                 loadState(); 
                 initTheme();
                 
+                if(!state.accounts) state.accounts = [];
                 if(!state.transfers) state.transfers = [];
 
                 const radios = document.getElementsByName('account-tag');
@@ -508,22 +558,48 @@
                     radio.addEventListener('change', (e) => {
                         const creditFields = document.getElementById('credit-fields');
                         const balanceLabel = document.getElementById('balance-label');
-                        // Reset card fields
                         const accNumLabel = document.getElementById('acc-num-label');
+                        const accNumContainer = document.getElementById('account-number-container');
+                        
+                        // New: Virtual Card Field Hiding
+                        const expiryField = document.getElementById('card-expiry-field');
+                        const cvvField = document.getElementById('card-cvv-field');
 
                         if (e.target.value === 'credit') {
                             creditFields.classList.remove('hidden');
                             balanceLabel.innerText = 'Outstanding Balance (Debt)';
                             balanceLabel.classList.add('text-red-500');
-                            accNumLabel.innerText = "Card Number";
+                            accNumLabel.innerText = "Last 4 Digits";
+                            
+                            // Hide CVV/Expiry AND Account Number for Credit
+                            accNumContainer.classList.add('hidden');
+                            expiryField.classList.add('hidden');
+                            cvvField.classList.add('hidden');
                         } else {
                             creditFields.classList.add('hidden');
                             balanceLabel.innerText = 'Current Balance';
                             balanceLabel.classList.remove('text-red-500');
                             accNumLabel.innerText = "Account Number";
+
+                            // Show for others
+                            accNumContainer.classList.remove('hidden');
+                            expiryField.classList.remove('hidden');
+                            cvvField.classList.remove('hidden');
                         }
                     });
                 });
+
+                // Auto-format Expiry Date
+                const expiryInput = document.getElementById('new-account-expiry');
+                if (expiryInput) {
+                    expiryInput.addEventListener('input', function(e) {
+                        let input = e.target.value.replace(/\D/g, ''); // Remove non-digits
+                        if (input.length > 2) {
+                            input = input.substring(0, 2) + '/' + input.substring(2, 4);
+                        }
+                        e.target.value = input.substring(0, 5); // Limit to MM/YY length
+                    });
+                }
 
                 document.addEventListener('click', (e) => {
                     if (!e.target.closest('.relative')) {
@@ -1018,7 +1094,7 @@
                 const noteLabel = terms === 1 ? `Bill/Loan - ${acc.name}` : `Installment (${i+1}/${terms}) - ${acc.name}`;
 
                 state.expenses.push({
-                    id: dueDate.getTime(), 
+                    id: dueDate.getTime() + i, // Add tiny delay to id to ensure unique
                     amount: monthlyAmount,
                     interestPortion: monthlyInterest, 
                     note: noteLabel,
@@ -1052,7 +1128,7 @@
             
             const cardContainer = document.getElementById('virtual-card-container');
 
-            // --- CHANGED: Hide Virtual Card if Credit ---
+            // --- CHANGED: STRICT Hide Virtual Card if Credit ---
             if (acc.tag === 'credit') {
                 cardContainer.classList.add('hidden');
             } else {
@@ -1221,6 +1297,7 @@
             document.getElementById('new-account-expiry').value = acc.cardExpiry || '';
             document.getElementById('new-account-cvv').value = acc.cardCvv || '';
 
+            // Trigger Radio Change First to ensure DOM is ready
             const radios = document.getElementsByName('account-tag');
             radios.forEach(r => {
                 if(r.value === acc.tag) {
@@ -1229,12 +1306,11 @@
                 }
             });
 
-            const creditFields = document.getElementById('credit-fields');
-            
+            // Populate Credit Fields if Credit (Prevent 0/empty mismatch)
             if (acc.tag === 'credit') {
-                document.getElementById('new-account-limit').value = acc.creditLimit || '';
-                document.getElementById('new-account-statement').value = acc.statementDate || '';
-                document.getElementById('new-account-due').value = acc.dueDate || '';
+                document.getElementById('new-account-limit').value = acc.creditLimit != null ? acc.creditLimit : '';
+                document.getElementById('new-account-statement').value = acc.statementDate != null ? acc.statementDate : '';
+                document.getElementById('new-account-due').value = acc.dueDate != null ? acc.dueDate : '';
             }
 
             document.getElementById('btn-delete-account').classList.remove('hidden');
@@ -1259,9 +1335,12 @@
         function submitNewAccount() {
             const name = document.getElementById('new-account-name').value;
             const balance = Number(document.getElementById('new-account-balance').value);
-            const limit = Number(document.getElementById('new-account-limit').value);
+            
+            // Safe Number Conversion for Credit Fields
+            const limit = document.getElementById('new-account-limit').value;
             const due = document.getElementById('new-account-due').value;
             const statement = document.getElementById('new-account-statement').value;
+
             const accountNumber = document.getElementById('new-account-number').value;
             const cardExpiry = document.getElementById('new-account-expiry').value;
             const cardCvv = document.getElementById('new-account-cvv').value;
@@ -1282,11 +1361,13 @@
                 type: provider.type, 
                 tag: tag, 
                 accountNumber: accountNumber,
-                cardExpiry: tag === 'credit' || tag === 'daily' ? cardExpiry : null,
-                cardCvv: tag === 'credit' || tag === 'daily' ? cardCvv : null,
-                creditLimit: tag === 'credit' ? limit : null,
-                statementDate: tag === 'credit' ? statement : null,
-                dueDate: tag === 'credit' ? due : null
+                // Only save expiry/cvv if NOT credit
+                cardExpiry: tag === 'daily' || tag === 'savings' ? cardExpiry : null,
+                cardCvv: tag === 'daily' || tag === 'savings' ? cardCvv : null,
+                // Explicitly save as Numbers or null for Credit
+                creditLimit: tag === 'credit' ? Number(limit) : null,
+                statementDate: tag === 'credit' ? Number(statement) : null,
+                dueDate: tag === 'credit' ? Number(due) : null
             };
 
             if (editingId) {
@@ -1495,5 +1576,6 @@
             showCustomAlert("Success", "Transfer complete");
         }
     </script>
+    <script src="script.js"></script>
 </body>
 </html>
